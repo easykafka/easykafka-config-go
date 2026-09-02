@@ -1,6 +1,8 @@
 package unit
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	ekconfig "github.com/easykafka/easykafka-config-go"
@@ -156,29 +158,47 @@ func TestBindingValidateIntKeyed(t *testing.T) {
 }
 
 // A composite key needs no registration anywhere — DecodeKey is just a function,
-// and K becomes whatever it returns.
+// and K becomes whatever it returns. Here a record key of "EUR:USD" decodes into
+// a two-field struct, so the store is keyed by the pair rather than by a string
+// every caller would have to format identically.
 func TestBindingValidateCustomStructKey(t *testing.T) {
 	t.Parallel()
 
-	type slipGroupKey struct {
-		Tenant string
-		ID     string
+	type currencyPair struct {
+		From string
+		To   string
 	}
 
-	binding := ekconfig.Binding[slipGroupKey, playerConfig]{
-		Name:  "SlipGroupCoeff",
-		Topic: "slipgroup-coeff.compact",
-		DecodeKey: func(raw []byte) (slipGroupKey, error) {
-			return slipGroupKey{Tenant: "hr", ID: string(raw)}, nil
+	type exchangeRate struct {
+		Rate float64 `json:"rate"`
+	}
+
+	binding := ekconfig.Binding[currencyPair, exchangeRate]{
+		Name:  "ExchangeRate",
+		Topic: "exchange-rate.compact",
+		DecodeKey: func(raw []byte) (currencyPair, error) {
+			from, to, ok := strings.Cut(string(raw), ":")
+			if !ok {
+				return currencyPair{}, fmt.Errorf("malformed currency pair %q", raw)
+			}
+
+			return currencyPair{From: from, To: to}, nil
 		},
-		DecodeValue: ekconfig.JSONValue[playerConfig],
+		DecodeValue: ekconfig.JSONValue[exchangeRate],
 	}
 
 	require.NoError(t, binding.Validate())
 
-	store := ekconfig.NewStore[slipGroupKey, playerConfig]()
-	store.Put(slipGroupKey{Tenant: "hr", ID: "123"}, &playerConfig{Limit: 9})
+	key, err := binding.DecodeKey([]byte("EUR:USD"))
+	require.NoError(t, err)
+	assert.Equal(t, currencyPair{From: "EUR", To: "USD"}, key)
 
-	assert.Equal(t, 9, store.GetOrNil(slipGroupKey{Tenant: "hr", ID: "123"}).Limit)
-	assert.Nil(t, store.GetOrNil(slipGroupKey{Tenant: "pl", ID: "123"}))
+	_, err = binding.DecodeKey([]byte("EURUSD"))
+	require.Error(t, err, "a key the decoder cannot split must be an error, not a half-filled struct")
+
+	store := ekconfig.NewStore[currencyPair, exchangeRate]()
+	store.Put(key, &exchangeRate{Rate: 1.09})
+
+	assert.InDelta(t, 1.09, store.GetOrNil(key).Rate, 0.0001)
+	assert.Nil(t, store.GetOrNil(currencyPair{From: "USD", To: "EUR"}), "the reversed pair is a different key")
 }
