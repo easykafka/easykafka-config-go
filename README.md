@@ -10,10 +10,9 @@
 
 Compacted Kafka topics as typed, thread-safe, in-memory maps.
 
-> **Status: phase P1.** `Store`, `Binding` and the codecs are implemented and tested; the `Loader`,
-> the driver layer and the warm-up detectors are still to come, so the library cannot yet read a topic.
-> Design and phased plan live in the `srm-specs` repository under
-> `specs/easykafka/001-config-from-compact-topics/`.
+> **Status: work in progress.** `Store`, `Binding` and the codecs are implemented and tested; the
+> `Loader`, the driver layer and the warm-up detectors are still to come, so the library cannot yet
+> read a topic.
 
 ## 💡 Why easykafka-config-go?
 

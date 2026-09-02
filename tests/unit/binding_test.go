@@ -134,8 +134,8 @@ func TestBindingValidateErrorNamesTheBinding(t *testing.T) {
 	assert.Contains(t, err.Error(), "PlayerConfig")
 }
 
-// Int-keyed bindings are the other shape SRM uses (template and risk-level
-// topics keyed by a numeric id).
+// Int-keyed bindings are the other common shape: a topic keyed by a numeric id
+// rather than a string.
 func TestBindingValidateIntKeyed(t *testing.T) {
 	t.Parallel()
 

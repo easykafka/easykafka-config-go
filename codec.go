@@ -73,8 +73,9 @@ func JSONValue[V any](raw []byte) (*V, error) {
 type TombstonePolicy func(raw []byte) bool
 
 // TombstoneOnBlankPayload treats a nil, empty or whitespace-only payload as a
-// delete. It is the default, and matches how SRM producers signal removal
-// today: a record whose value trims to the empty string.
+// delete. It is the default because producers commonly signal removal by
+// writing an empty value rather than a true null, and a payload that is only
+// whitespace carries the same intent.
 func TombstoneOnBlankPayload(raw []byte) bool {
 	return len(bytes.TrimSpace(raw)) == 0
 }
