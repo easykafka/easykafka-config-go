@@ -8,4 +8,10 @@ go 1.27.0
 //   to the driver directly and takes no dependency on easykafka-go (decision D1).
 //   The first real import lands in P2 (internal/driver); the pin is fixed here so P2 does not have
 //   to make the version decision.
-require github.com/confluentinc/confluent-kafka-go/v2 v2.15.0
+// - testify: assertions in the unit and integration suites, same version as easykafka-go
+require (
+	github.com/confluentinc/confluent-kafka-go/v2 v2.15.0
+	github.com/stretchr/testify v1.12.1
+)
+
+require go.yaml.in/yaml/v3 v3.0.5 // indirect
