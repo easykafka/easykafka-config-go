@@ -139,18 +139,32 @@ func TestJSONValueMatchesFieldNamesCaseInsensitively(t *testing.T) {
 // JSONValue is assignable to Binding.DecodeValue. Both forms below are
 // compile-time assertions as much as tests.
 //
-// Note the asymmetry, which is a go1.27.0 compiler bug rather than a language
-// rule: assigning the uninstantiated generic function to a func-typed variable
-// works, but doing the same inside a composite literal
-// (DecodeValue: ekconfig.JSONValue) crashes the compiler with
+// Three spellings, only two of which compile on go1.27.0:
+//
+//	var f func([]byte) (*playerConfig, error) = ekconfig.JSONValue  // ok: inferred
+//	DecodeValue: ekconfig.JSONValue[playerConfig]                   // ok: explicit
+//	DecodeValue: ekconfig.JSONValue                                 // ICE, see below
+//
+// The asymmetry is a compiler bug, not a language rule — the language permits
+// the third form, and the first shows the same inference working. The third
+// crashes the compiler with an ICE (internal compiler error — the compiler
+// failing on its own bug rather than rejecting the code):
 //
 //	internal compiler error: func[V any](raw []byte) (*V, error) is not
 //	assignable to func(raw []byte) (*unit.playerConfig, error)
 //
 // It reproduces in ~14 lines whenever the generic function comes from another
 // package and is used as a composite-literal field value — the struct need not
-// even be generic. Hence every binding in this repository spells out the type
-// argument. Revisit when the fix lands upstream.
+// even be generic.
+//
+// The broken form cannot appear in this test: it fails at compile time, so it
+// would break the build of the whole package. Hence this comment.
+//
+// Nothing is pending in the library. Every binding spells out the type argument,
+// which is preferable anyway — JSONValue[playerConfig] says what it decodes at
+// the call site instead of leaving a reader to infer it from the enclosing
+// literal. The only outstanding action is external: report the ICE to golang/go,
+// which the error message itself asks for.
 func TestJSONValueIsAssignableToDecodeValue(t *testing.T) {
 	t.Parallel()
 
