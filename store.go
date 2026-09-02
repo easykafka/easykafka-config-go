@@ -76,6 +76,14 @@ func (s *Store[K, V]) Len() int {
 // observed.
 func (s *Store[K, V]) All() iter.Seq2[K, *V] {
 	return func(yield func(K, *V) bool) {
+		// Returning yield's result is the stop check, not a shortcut: yield
+		// reports false once the consumer is done (break, return), and calling
+		// it again then panics with "range function continued iteration after
+		// function for loop body returned false".
+		//
+		// It can be propagated directly only because Range and yield share the
+		// convention that true means "keep going". A callback with inverted or
+		// error-based semantics would need an explicit if !yield(...) { return }.
 		s.m.Range(func(k, v any) bool {
 			return yield(k.(K), v.(*V))
 		})
