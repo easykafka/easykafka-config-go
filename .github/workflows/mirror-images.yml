@@ -1,0 +1,33 @@
+name: Mirror Docker Images to GHCR
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # every Sunday at midnight
+  workflow_dispatch:       # allow manual trigger
+
+env:
+  KAFKA_IMAGE: confluentinc/cp-kafka:7.5.0
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mirror cp-kafka to GHCR
+        run: |
+          src="${{ env.KAFKA_IMAGE }}"
+          # Flatten the image name: confluentinc/cp-kafka:7.5.0 -> mirror-confluentinc-cp-kafka:7.5.0. (sed replaces every / with -)
+          target="ghcr.io/${{ github.repository_owner }}/mirror-$(echo "$src" | sed 's|/|-|g')"
+          echo "Mirroring $src -> $target"
+          docker pull "$src"
+          docker tag "$src" "$target"
+          docker push "$target"

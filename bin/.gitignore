@@ -1,0 +1,5 @@
+# Pinned dev tools installed by `make install-tools` (golangci-lint, gotestsum).
+# Never commit the binaries — ignore everything here except this file, which is
+# tracked so the directory exists after a fresh clone.
+*
+!.gitignore

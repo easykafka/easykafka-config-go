@@ -1,0 +1,76 @@
+# Kept in sync with easykafka-go and the other SRM Go repos (srm-common,
+# srm-overask, srm-transactional-core) so the two easykafka libraries can be
+# maintained in parallel. Differences from easykafka-go are limited to
+# repo-specific exclusions and are marked below.
+version: "2"
+
+linters:
+  enable:
+  - bodyclose     # Check for missing body close
+  - contextcheck  # Check whether the function uses a non-inherited context.
+  - dupl          # Detects duplicate fragments of code.
+  - durationcheck # Check for two durations multiplied together.
+  - errcheck      # Detect unchecked errors
+  - gocognit      # Computes and checks the cognitive complexity of functions.
+  - gocritic      # Provides diagnostics that check for bugs, performance and style issues.
+  - gosec         # Inspects source code for security problems
+  - govet         # Examine Go source code and reports suspicious constructs
+  - ineffassign   # Detect ineffectual assignments
+  - lll           # Reports long lines.
+  - misspell      # Find commonly misspelled English words in comments
+  - mnd           # An analyzer to detect magic numbers.
+  - modernize     # A suite of analyzers that suggest simplifications to Go code, using modern language and library features.
+  - nestif        # Reports deeply nested if statements.
+  - nilerr        # Find the code that returns nil even if it checks that the error is not nil.
+  - nilnil        # Checks that there is no simultaneous return of nil error and an invalid value.
+  - revive        # Fast, configurable, extensible, flexible, and beautiful linter for Go
+  - staticcheck   # Go static analysis
+  - sqlclosecheck # Checks that sql.Rows, sql.Stmt, sqlx.NamedStmt, pgx.Query are closed.
+  - testifylint   # Checks usage of github.com/stretchr/testify
+  - unconvert     # Remove unnecessary type conversions
+  - unparam       # Find unused function parameters
+  - unused        # Check for unused constants, variables, functions and types
+  - whitespace    # Tool for detection of leading and trailing whitespace
+  - zerologlint   # Detects the wrong usage of zerolog that a user forgets to dispatch with Send or Msg.
+  settings:
+    revive:
+      rules:
+        - name: exported
+          severity: warning
+          disabled: false
+          arguments:
+            - "check-private-receivers"
+            - "disable-stuttering-check"
+            - "disable-checks-on-variables"
+            - "disable-checks-on-methods"
+            - "disable-checks-on-functions"
+            - "disable-checks-on-types"
+            - "disable-checks-on-constants"
+    whitespace:
+      # Enforces newlines (or comments) after every multi-line if statement.
+      # Default: false
+      multi-if: true
+      # Enforces newlines (or comments) after every multi-line function signature.
+      # Default: false
+      multi-func: true
+  exclusions:
+    rules:
+    - source: "^\t*// "
+      linters:
+        - lll
+    # Test code: magic numbers, long table-driven cases, deferred Close() and
+    # fixed-signature helpers are idiomatic here and not worth the churn.
+    - path: ^tests/
+      linters:
+        - dupl
+        - errcheck
+        - gocognit
+        - gosec
+        - lll
+        - mnd
+        - unparam
+issues:
+  max-issues-per-linter: 0
+  # Siblings rely on the default (3), which hides repeats of the same issue
+  # text and makes the backlog look smaller than it is. Report everything.
+  max-same-issues: 0

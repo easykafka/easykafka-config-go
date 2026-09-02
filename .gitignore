@@ -1,0 +1,51 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+*.cover
+
+# Go workspace file
+go.work
+
+# Dependency directories (remove the comment below to include it)
+vendor/
+
+# Go build cache
+.cache/
+
+# IDE-specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+# NOTE: ./bin is not ignored here on purpose — its contents are ignored by
+# bin/.gitignore, which is itself tracked so the directory exists after clone.
+dist/
+build/
+
+# Development files
+*.log
+.env
+.env.local
+.env.*.local
+
+# Test coverage
+coverage/
+*.coverprofile
+
+# Temporary files
+*.tmp
+Thumbs.db
