@@ -9,9 +9,11 @@
 //
 // # Status
 //
-// Scaffolding only (phase P0). The API below is designed but not yet implemented —
-// see the design and plan in the srm-specs repository:
-// specs/easykafka/001-config-from-compact-topics/.
+// Phase P1. Store, Binding and the codecs (StringKey, IntKey, Int64Key,
+// JSONValue and the tombstone policies) are implemented and tested. Loader,
+// the driver layer and the warm-up detectors are not, so nothing reads a topic
+// yet — the sketch below is the target shape. See the design and plan in the
+// srm-specs repository: specs/easykafka/001-config-from-compact-topics/.
 //
 // # Intended shape
 //
@@ -27,7 +29,7 @@
 //	    Name:        "PlayerConfig",
 //	    Topic:       "player-config.compact",
 //	    DecodeKey:   ekconfig.StringKey,
-//	    DecodeValue: ekconfig.JSONValue,
+//	    DecodeValue: ekconfig.JSONValue[PlayerConfig],
 //	})
 //
 //	if err := loader.Start(ctx); err != nil {   // blocks until every topic is drained

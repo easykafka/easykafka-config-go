@@ -10,8 +10,9 @@
 
 Compacted Kafka topics as typed, thread-safe, in-memory maps.
 
-> **Status: scaffolding (phase P0).** The repository, tooling and CI are in place; the API is designed
-> but not yet implemented. Design and phased plan live in the `srm-specs` repository under
+> **Status: phase P1.** `Store`, `Binding` and the codecs are implemented and tested; the `Loader`,
+> the driver layer and the warm-up detectors are still to come, so the library cannot yet read a topic.
+> Design and phased plan live in the `srm-specs` repository under
 > `specs/easykafka/001-config-from-compact-topics/`.
 
 ## 💡 Why easykafka-config-go?
@@ -51,7 +52,7 @@ players := loader.Bind(ekconfig.Binding[string, PlayerConfig]{
     Name:        "PlayerConfig",
     Topic:       "player-config.compact",
     DecodeKey:   ekconfig.StringKey,
-    DecodeValue: ekconfig.JSONValue,
+    DecodeValue: ekconfig.JSONValue[PlayerConfig],
 })
 
 if err := loader.Start(ctx); err != nil {   // blocks until every topic is drained
