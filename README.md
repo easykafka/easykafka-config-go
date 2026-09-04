@@ -1,3 +1,19 @@
+<!-- Mirror notice. Kept as plain HTML on purpose: it renders as a bordered box on
+     both GitHub and GitLab, whereas GitHub's "> [!IMPORTANT]" alert syntax would
+     show up as literal text on the mirror — the one place it needs to be read. -->
+<table>
+  <tr>
+    <td>
+      <h3>⚠️ &nbsp;Not on <code>github.com/easykafka</code>? You are reading a mirror.</h3>
+      <p>
+        This copy is <strong>read-only</strong> and may lag behind. Issues, pull requests, releases and CI
+        all live at the source of truth:<br><br>
+        👉 &nbsp;<a href="https://github.com/easykafka/easykafka-config-go"><strong>github.com/easykafka/easykafka-config-go</strong></a>
+      </p>
+    </td>
+  </tr>
+</table>
+
 # 🗺️ easykafka-config-go
 
 [![Build & Lint](https://github.com/easykafka/easykafka-config-go/actions/workflows/build-lint.yml/badge.svg)](https://github.com/easykafka/easykafka-config-go/actions/workflows/build-lint.yml)
