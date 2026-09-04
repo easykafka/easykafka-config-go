@@ -21,7 +21,6 @@
 [![Integration Tests](https://github.com/easykafka/easykafka-config-go/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/easykafka/easykafka-config-go/actions/workflows/integration-tests.yml)
 [![codecov](https://codecov.io/gh/easykafka/easykafka-config-go/branch/main/graph/badge.svg)](https://codecov.io/gh/easykafka/easykafka-config-go)
 [![Go Reference](https://pkg.go.dev/badge/github.com/easykafka/easykafka-config-go.svg)](https://pkg.go.dev/github.com/easykafka/easykafka-config-go)
-[![Go Report Card](https://goreportcard.com/badge/github.com/easykafka/easykafka-config-go)](https://goreportcard.com/report/github.com/easykafka/easykafka-config-go)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 Compacted Kafka topics as typed, thread-safe, in-memory maps.
