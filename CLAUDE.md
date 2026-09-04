@@ -108,7 +108,24 @@ GitHub Actions workflows in `.github/workflows/`, mirroring `easykafka-go`:
 - `unit-tests.yml` — unit tests with `-race`
 - `integration-tests.yml` — integration tests with Docker/testcontainers
 - `coverage.yml` — uploads coverage to Codecov
-- `mirror-images.yml` — mirrors the Kafka image to GHCR (`confluentinc/cp-kafka:7.5.0`)
 
-Integration tests in CI pull Kafka from `ghcr.io/<owner>/mirror-confluentinc-cp-kafka:7.5.0` via the
-`KAFKA_IMAGE` environment variable; locally the helper falls back to Docker Hub.
+### The Kafka image mirror is shared across the organisation
+
+Integration tests and the coverage job pull Kafka from
+`ghcr.io/<owner>/mirror-confluentinc-cp-kafka:7.5.0` via the `KAFKA_IMAGE` environment variable, which
+exists to avoid Docker Hub rate limits. Locally the helper falls back to Docker Hub, so no login or
+mirror is needed for `make test-integration`.
+
+**This repository does not mirror the image, on purpose.** A GHCR package is owned by the
+*organisation*, not by a repository, so `ghcr.io/easykafka/mirror-...` is one shared package and
+mirroring it a second time from here would only re-push the same digest on a second weekly schedule.
+`easykafka-go` owns that job (`mirror-images.yml`) for the whole org; every other repository consumes
+the result.
+
+The catch worth knowing when adding a new repository: although the package is org-owned, each package
+keeps its **own per-repository access list**, and a package created by one repo's workflow starts out
+linked to that repo alone. A new repo's `GITHUB_TOKEN` is then denied — `permission_denied:
+write_package` when pushing, or a bare `denied` from the Docker daemon when testcontainers tries to
+pull. Note that `permissions: packages: read` only grants the token the right to ask; the package's
+access list decides whether it gets in. Fix it in the org's package settings (**Manage Actions
+access**), or make the mirror public, since it is a byte-identical copy of a public image.
