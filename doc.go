@@ -9,12 +9,11 @@
 //
 // # Status
 //
-// Work in progress. Store, Binding and the codecs (StringKey, IntKey, Int64Key,
-// JSONValue and the tombstone policies) are implemented and tested. Loader, the
-// driver layer and the warm-up detectors are not, so nothing reads a topic yet —
-// the sketch below is the target shape.
+// Work in progress, but usable end to end: a loader reads compacted topics into
+// typed stores. The remaining gaps are the alternative warm-up detectors
+// (only PartitionEOF, the default, is implemented) and a logging Observer.
 //
-// # Intended shape
+// # Usage
 //
 //	loader, err := ekconfig.NewLoader(
 //	    ekconfig.WithBrokers("localhost:9092"),

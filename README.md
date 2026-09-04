@@ -25,9 +25,9 @@
 
 Compacted Kafka topics as typed, thread-safe, in-memory maps.
 
-> **Status: work in progress.** `Store`, `Binding` and the codecs are implemented and tested; the
-> `Loader`, the driver layer and the warm-up detectors are still to come, so the library cannot yet
-> read a topic.
+> **Status: work in progress, but usable end to end.** A loader reads compacted topics into typed
+> stores, with warm-up, tombstones, live updates and lifecycle. Still to come: the alternative warm-up
+> detectors (only `PartitionEOF`, the default, is implemented) and a logging `Observer`.
 
 ## 💡 Why easykafka-config-go?
 
@@ -51,7 +51,7 @@ go get github.com/easykafka/easykafka-config-go
 Requires Go 1.27+ (generic methods, iterators) and a C toolchain for `librdkafka` — see the
 confluent-kafka-go docs for platform specifics.
 
-## 🚀 Intended usage
+## 🚀 Usage
 
 ```go
 loader, err := ekconfig.NewLoader(
@@ -85,7 +85,8 @@ cfg := players.GetOrNil("player-42")        // typed; no assertions, no lock
 * **Offsets are never committed.** A restart re-reads the topic by construction, which is what makes the
   in-memory map reproducible.
 * **Warm-up completion is detected, not guessed.** The default waits for `PartitionEOF` on every
-  assigned partition; watermark-based and idle-poll detectors are also available.
+  assigned partition, so an empty topic is reported in milliseconds rather than after a timeout, and a
+  slow broker is never mistaken for a drained one. Watermark-based and idle-poll detectors are planned.
 * **Nothing is fatal inside the library.** Empty required topic, bad payload, broker loss — all surface
   as errors, lifecycle state, or observer callbacks. Only the service decides to exit.
 
