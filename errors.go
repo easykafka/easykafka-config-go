@@ -39,7 +39,4 @@ var (
 
 	// ErrUnknownBinding means LookupRaw was given a name no binding uses.
 	ErrUnknownBinding = errors.New("unknown binding")
-
-	// ErrClosed means the loader was closed while it was still warming up.
-	ErrClosed = errors.New("loader closed")
 )

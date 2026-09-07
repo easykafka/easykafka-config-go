@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/easykafka/easykafka-config-go/internal/driver"
-	"github.com/rs/zerolog"
 )
 
 // loadProgressEvery is how many records are applied between OnLoadProgress
@@ -22,36 +21,57 @@ const loadProgressEvery = 100_000
 // topics.
 //
 // The usual sequence is: NewLoader, one Bind per topic, Start, then lookups
-// against the returned stores for the life of the process, and Close on the way
-// out. Start blocks until every topic has been read whole, so a service that
-// returns from Start has complete configuration in memory.
+// against the returned stores for the life of the process. Start blocks until
+// every topic has been read whole, so a service that returns from Start has
+// complete configuration in memory. To stop, cancel the context given to Start
+// and call WaitUntilStopped.
 //
 // A Loader is safe for concurrent use. Bind is the exception: it must be called
 // before Start, from the goroutine doing the wiring.
+//
+// # How the lifecycle is coordinated
+//
+// Warm-up finishes before serving starts, and that single property is what
+// keeps the coordination small. There are two generations of goroutine, one per
+// binding each, and they never overlap:
+//
+//   - warm-up, transient: each reads one topic to its end and returns its
+//     outcome. Start waits for all of them with a local WaitGroup and collects
+//     the outcomes from a pre-sized slice, so no channel is involved.
+//   - serving, long-lived: each applies live changes until the loader stops.
+//     These outlive Start and are counted by the serving WaitGroup, which is
+//     what WaitUntilStopped waits on.
+//
+// Because generation one has exited before generation two exists, a consumer
+// can be handed from one to the other with no lock, and the phase change needs
+// no signal — it is the return of a WaitGroup's Wait.
+//
+// Stopping is likewise the caller's: there is no cancellation inside the loader
+// and nothing to close. Cancelling the context passed to Start stops every
+// binding, as does a fatal Kafka error, which stops them by recording itself in
+// err.
 type Loader struct {
 	cfg loaderConfig
 
-	// mu guards the binding set and the run state below. started and cancel are
-	// set together when Start begins, which is why one lock covers both.
+	// mu guards the binding set and the started flag. Held only briefly — for
+	// the claim in Start, and for Bind, Stats and LookupRaw — and never across
+	// a poll.
 	mu      sync.Mutex
 	regs    []*registration
 	byName  map[string]*registration
 	started bool
-	cancel  context.CancelFunc // nil until Start; nil again never — Close is idempotent
 
-	ready     chan struct{}
-	readyOnce sync.Once
-	done      chan struct{}
-	doneOnce  sync.Once
+	// err does double duty. It is the first reason a binding died, reported by
+	// Err; and it is the stop signal, because every serving goroutine tests it
+	// in the between-poll check it already performs. An atomic rather than a
+	// field under mu because it is read once per poll by every binding and by
+	// liveness probes, so it must not contend with Bind or Stats. First writer
+	// wins, so the reason kept is the one that explains the shutdown.
+	err atomic.Pointer[error]
 
-	// err uses an atomic rather than mu for its compare-and-swap: the first
-	// reason the loader stopped is the one that explains the shutdown, and
-	// later failures must not overwrite it. Err is also read by liveness
-	// probes, which should not contend with Bind, Stats or LookupRaw.
-	err       atomic.Pointer[error]
-	closeOnce sync.Once
-
-	wg sync.WaitGroup
+	// serving counts the serving goroutines, so WaitUntilStopped can tell when
+	// the last one has exited and closed its consumer.
+	serving sync.WaitGroup
 }
 
 // NewLoader builds a loader from the given options. It contacts no broker;
@@ -65,8 +85,6 @@ func NewLoader(opts ...Option) (*Loader, error) {
 	return &Loader{
 		cfg:    cfg,
 		byName: make(map[string]*registration),
-		ready:  make(chan struct{}),
-		done:   make(chan struct{}),
 	}, nil
 }
 
@@ -86,18 +104,36 @@ func (l *Loader) add(reg *registration) {
 	l.byName[reg.name] = reg
 }
 
-// Start connects one consumer per binding, reads every topic to its end, and
+// Start builds one consumer per binding, reads every topic to its end, and
 // returns once all of them are done.
 //
 // On success the stores are fully populated and the consumers keep running in
 // the background applying live changes — Start returning is not the loader
 // stopping. On failure it returns every binding's error joined together, having
-// stopped all consumers, so one call reports all the misconfigured topics rather
-// than the first.
+// closed every consumer and started nothing, so one call reports all the
+// misconfigured topics rather than the first.
+//
+// ctx must be the process context — the one cancelled on SIGINT/SIGTERM — and
+// must not carry a deadline of its own. Wrapping it in a WithTimeout to guard
+// startup stops every consumer when that timeout fires, freezing the stores at
+// whatever they then held for the rest of the process's life. Use
+// WithWarmupTimeout for that instead: it bounds warm-up alone and leaves
+// serving on the caller's context.
 //
 // It can be called only once.
 func (l *Loader) Start(ctx context.Context) error {
+	// Check the loader has not been started, then mark it started, so that of
+	// two concurrent Start calls exactly one proceeds and the other gets
+	// ErrAlreadyStarted. Both steps have to happen under one lock or both calls
+	// could pass the check before either sets the flag.
+	//
+	// Unlocking is deliberately explicit rather than deferred: the work below
+	// blocks for as long as the topics take to read, and Bind, Stats and
+	// LookupRaw take this same lock. A deferred unlock would hold it for the
+	// whole of Start and stall all three. Mind this when adding a return
+	// anywhere in the locked section.
 	l.mu.Lock()
+
 	if l.started {
 		l.mu.Unlock()
 
@@ -112,237 +148,176 @@ func (l *Loader) Start(ctx context.Context) error {
 
 	// Copy the slice, not the registrations: the pointers still refer to the
 	// same registrations, which every binding's goroutine keeps mutating —
-	// hence the atomics on their counters. Only the pointer list is private
-	// here.
+	// hence the atomics on their counters. Only the pointer list is private.
 	//
-	// That private list is what lets the lock be released before the slow work
-	// below, which matters most for Close: it takes this same mutex, so holding
-	// it across warm-up would deadlock — warm-up would wait for a cancellation
-	// only Close could deliver.
-	//
-	// The copy itself is belt-and-braces today, since started == true makes
-	// add panic and l.regs can no longer change. It keeps this correct anyway
-	// if binding after Start is ever allowed, or made to return an error
-	// instead of panicking.
+	// The copy is belt-and-braces today, since started == true makes add panic
+	// and l.regs can no longer change. It keeps this correct anyway if binding
+	// after Start is ever allowed, or made to return an error instead of
+	// panicking.
 	regs := slices.Clone(l.regs)
+
 	l.mu.Unlock()
 
-	// Read inside out: WithoutCancel copies ctx keeping its values but never
-	// cancelling with it, then WithCancel wraps that in a context only we can
-	// cancel. So runCtx carries whatever the caller attached, while its
-	// cancellation belongs solely to stopConsumers.
-	//
-	// The two contexts bound two different lifetimes. The caller's ctx bounds
-	// warm-up, which awaitWarmup watches; runCtx bounds the consumers, which
-	// outlive this call and run until Close. Polling under the caller's ctx
-	// instead would conflate them, so a caller who scoped Start — say
-	// context.WithTimeout(ctx, 30*time.Second) as a guard against a broker that
-	// never answers — would have every consumer stop when that timeout expired,
-	// freezing the stores at their warm-up contents with nothing in the logs.
-	//
-	// The consequence is that cancelling the caller's ctx does not stop the
-	// loader: Close does, and it is needed regardless, since cancelling only
-	// signals whereas Close waits for the consumers to finish.
-	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-
-	l.mu.Lock()
-	l.cancel = cancel
-	l.mu.Unlock()
-
-	// One slot per binding, so no binding can ever block sending its outcome.
-	// See awaitWarmup for why that is required rather than merely tidy.
-	outcomes := make(chan error, len(regs))
-	for _, reg := range regs {
-		l.startBinding(runCtx, reg, outcomes)
+	// Build every consumer before starting anything. Construction is local —
+	// librdkafka connects lazily, so nothing here blocks on a broker — which is
+	// why it can be a plain sequential step, and why a bad configuration is
+	// reported before a single goroutine or poll exists.
+	consumers, err := l.newConsumers(regs)
+	if err != nil {
+		return fmt.Errorf("easykafkaconfig: %w", err)
 	}
 
-	if err := l.awaitWarmup(ctx, runCtx, regs, outcomes); err != nil {
-		return err
+	// Bound warm-up, and warm-up only. Any deadline on this context is this
+	// one, since Start requires a caller's ctx to carry none, which is what
+	// lets warmUpBinding report a DeadlineExceeded as ErrWarmupTimeout.
+	//
+	// Zero means no bound, which is the default: the runtime is expected to
+	// bound startup — a Kubernetes startup probe, say — and a library cannot
+	// guess that budget.
+	warmCtx := ctx
+	if l.cfg.warmupTimeout > 0 {
+		var cancel context.CancelFunc
+
+		warmCtx, cancel = context.WithTimeout(ctx, l.cfg.warmupTimeout)
+
+		// Nothing observes warmCtx by the time this runs — warm-up has finished
+		// and serving polls under ctx — so this cancels no work. It releases
+		// resources: the timer stays armed, and ctx keeps a reference to this
+		// child, until the deadline passes or cancel is called. go vet's
+		// lostcancel also requires it.
+		defer cancel()
 	}
 
-	l.readyOnce.Do(func() { close(l.ready) })
+	// Warm up every topic at once. Each goroutine writes its own slot, so the
+	// writes touch disjoint memory and need no lock; Wait is the only
+	// synchronisation, and it also publishes those writes — and everything the
+	// goroutines did to their consumers and stores — to this goroutine, and so
+	// to the serving goroutines started below.
+	//
+	// Every binding is heard out before anything is decided, rather than
+	// returning on the first failure, so one Start reports every misconfigured
+	// topic instead of whichever failed soonest.
+	results := make([]error, len(regs))
+
+	var warmup sync.WaitGroup
+	for i := range regs {
+		warmup.Go(func() { results[i] = l.warmUpBinding(warmCtx, regs[i], consumers[i]) })
+	}
+	warmup.Wait()
+
+	// errors.Join returns nil for an all-nil slice, so this covers both exits.
+	// Warm-up is all-or-nothing: one binding failing closes every consumer,
+	// including those that loaded their topic perfectly, because a partially
+	// loaded configuration is not something a caller can reason about.
+	if err := errors.Join(results...); err != nil {
+		l.closeAll(consumers)
+
+		return fmt.Errorf("easykafkaconfig: warm-up failed: %w", err)
+	}
+
 	l.cfg.logger.Info().Int("bindings", len(regs)).Msg("configuration loaded, serving live updates")
 
-	// From here the bindings run on their own. When the last one exits — a
-	// clean Close, or a binding dying — the loader is stopped.
-	go l.awaitStop()
-
-	return nil
-}
-
-// startBinding creates the consumer for one binding and launches its goroutine.
-// A consumer that cannot even be constructed is reported as that binding's
-// warm-up outcome, so the failure lands with the other results rather than
-// aborting Start halfway through the loop.
-func (l *Loader) startBinding(ctx context.Context, reg *registration, outcomes chan<- error) {
-	consumer, err := l.cfg.consumerFactory(l.cfg.consumerConfig(reg.topic))
-	if err != nil {
-		outcomes <- fmt.Errorf("binding %q: %w", reg.name, err)
-
-		return
-	}
-
-	l.wg.Go(func() { l.run(ctx, reg, consumer, outcomes) })
-}
-
-// awaitWarmup waits for every binding to report, and turns any failure into a
-// stopped loader.
-//
-// Every binding sends exactly one outcome — nil once its topic has been read
-// whole, or an error: a consumer that could not be built, a fatal Kafka error,
-// or an empty topic the binding did not permit. A non-fatal Kafka error sends
-// nothing, since librdkafka recovers from those on its own.
-//
-// The loop therefore runs exactly once per binding and accumulates errors
-// rather than returning on the first. That is deliberate: waiting for every
-// outcome is what lets one run report every misconfigured topic instead of
-// whichever failed first. Only after the last binding has reported does a
-// non-empty error list abort.
-//
-// Three things cut that short and abort without hearing from the rest: the
-// caller's context being cancelled, the warm-up timeout expiring, or Close
-// being called while warming up.
-//
-// Note that outcomes is buffered to one slot per binding, and that this matters
-// on an early abort: bindings that had not yet reported will still send, while
-// abortWarmup is in wg.Wait(). With an unbuffered channel those sends would
-// block on a receiver that no longer exists, and the wait would deadlock
-// against them. Sized to the maximum number of sends, no send can ever block.
-func (l *Loader) awaitWarmup(
-	callerCtx, runCtx context.Context,
-	regs []*registration,
-	outcomes <-chan error,
-) error {
-
-	var (
-		errs    []error
-		timeout <-chan time.Time
-	)
-
-	if l.cfg.warmupTimeout > 0 {
-		timer := time.NewTimer(l.cfg.warmupTimeout)
-		defer timer.Stop()
-		timeout = timer.C
-	}
-
-	for range regs {
-		select {
-		case err := <-outcomes:
-			if err != nil {
-				errs = append(errs, err)
-			}
-
-		case <-callerCtx.Done():
-			errs = append(errs, fmt.Errorf("warm-up interrupted: %w", callerCtx.Err()))
-
-			return l.abortWarmup(errs)
-
-		case <-timeout:
-			errs = append(errs, fmt.Errorf("%w after %s", ErrWarmupTimeout, l.cfg.warmupTimeout))
-
-			return l.abortWarmup(errs)
-
-		case <-runCtx.Done():
-			// Close was called while warming up.
-			errs = append(errs, fmt.Errorf("warm-up interrupted: %w", ErrClosed))
-
-			return l.abortWarmup(errs)
-		}
-	}
-
-	if len(errs) > 0 {
-		return l.abortWarmup(errs)
+	// Hand each consumer to a long-lived goroutine, now under the caller's
+	// context rather than the warm-up one: these outlive Start and stop when
+	// the application stops.
+	for i := range regs {
+		l.serving.Go(func() { l.serveBinding(ctx, regs[i], consumers[i]) })
 	}
 
 	return nil
 }
 
-// abortWarmup stops every binding and reports the joined failure. Ready is
-// deliberately left open: a readiness probe must never report ready on a
-// configuration that did not load.
-func (l *Loader) abortWarmup(errs []error) error {
-	joined := errors.Join(errs...)
-	l.setErr(joined)
-	l.stopConsumers()
-	l.wg.Wait()
-	l.finish()
+// newConsumers builds one consumer per binding, reporting every construction
+// failure rather than only the first.
+//
+// Nothing is polled and no goroutine exists yet, so on failure these consumers
+// have no owner to close them — this does it, or they would leak their
+// librdkafka threads for the life of the process.
+func (l *Loader) newConsumers(regs []*registration) ([]driver.Consumer, error) {
+	consumers := make([]driver.Consumer, 0, len(regs))
 
-	return fmt.Errorf("easykafkaconfig: warm-up failed: %w", joined)
-}
+	var errs []error
+	for _, reg := range regs {
+		consumer, err := l.cfg.consumerFactory(l.cfg.consumerConfig(reg.topic))
+		if err != nil {
+			errs = append(errs, fmt.Errorf("binding %q: %w", reg.name, err))
 
-// awaitStop closes Done once every binding has exited.
-func (l *Loader) awaitStop() {
-	l.wg.Wait()
-	l.finish()
-}
-
-// run drives one binding: assign, warm up, then serve.
-func (l *Loader) run(ctx context.Context, reg *registration, c driver.Consumer, outcomes chan<- error) {
-	// The consumer is closed by the goroutine that polls it, so no other
-	// goroutine has to coordinate with librdkafka's teardown.
-	defer func() {
-		reg.phase.Store(phaseStopped)
-		if err := c.Close(); err != nil {
-			l.cfg.logger.Warn().Err(err).Str("binding", reg.name).Msg("closing consumer")
+			continue
 		}
-	}()
-
-	logger := l.cfg.logger.With().Str("binding", reg.name).Str("topic", reg.topic).Logger()
-
-	if err := l.warmup(ctx, reg, c, logger); err != nil {
-		outcomes <- err
-
-		return
+		consumers = append(consumers, consumer)
 	}
-	outcomes <- nil
 
-	l.serve(ctx, reg, c)
+	if err := errors.Join(errs...); err != nil {
+		l.closeAll(consumers)
+
+		return nil, err
+	}
+
+	return consumers, nil
 }
 
-// warmup reads the topic to its end, as decided by the configured detector.
-func (l *Loader) warmup(ctx context.Context, reg *registration, c driver.Consumer, logger zerolog.Logger) error {
+// closeAll closes consumers that no goroutine owns, which is the case only
+// before the handover in Start: either construction failed part way, or warm-up
+// failed and generation one has already exited. Once a serving goroutine owns a
+// consumer, that goroutine closes it and this must not.
+func (l *Loader) closeAll(consumers []driver.Consumer) {
+	for _, consumer := range consumers {
+		if err := consumer.Close(); err != nil {
+			l.cfg.logger.Warn().Err(err).Msg("closing consumer after a failed start")
+		}
+	}
+}
+
+// warmUpBinding reads one topic to its end, as decided by the configured
+// detector. It returns nil once the store is fully populated.
+//
+// It does not close the consumer on either path: until the handover in Start
+// the consumers belong to Start, which closes them if any binding fails. This
+// goroutine only borrows one.
+func (l *Loader) warmUpBinding(ctx context.Context, reg *registration, c driver.Consumer) error {
 	started := time.Now()
+	logger := l.cfg.logger.With().Str("binding", reg.name).Str("topic", reg.topic).Logger()
 
 	partitions, err := c.AssignAll(ctx)
 	if err != nil {
-		return fmt.Errorf("binding %q: %w", reg.name, err)
+		return fmt.Errorf("binding %q: %w", reg.name, l.nameTimeout(err))
 	}
 
+	// The detector may query the broker here, hence the error. It cannot happen
+	// earlier: the partition list does not exist until assignment.
+	//
+	// detectionProgress rather than detection, because detection is the name of
+	// the interface type in detect.go and a variable shadowing a type makes the
+	// loop below harder to read than it needs to be.
 	detectionProgress, err := l.cfg.detector.begin(c, partitions)
 	if err != nil {
 		return fmt.Errorf("binding %q: preparing load detection: %w", reg.name, err)
 	}
 
-	timeout := l.cfg.detector.pollTimeout()
 	progressAt := loadProgressEvery
 
 	for {
-		// Check for cancellation without waiting for it. The default case is
-		// what makes this a check rather than a wait: without it, the select
-		// would block on a signal that in normal operation never arrives.
+		// Cancellation is checked between polls, never waited for. It has to
+		// happen here because Poll takes no context — it is a blocking call
+		// into librdkafka bounded only by its own timeout, so nothing can
+		// interrupt one already in flight. Shutdown latency is therefore up to
+		// one poll timeout, which is why the timeouts are short.
 		//
-		// It has to happen here, between polls, because Poll takes no context —
-		// it is a blocking call into librdkafka bounded only by its own timeout,
-		// so nothing can interrupt one already in flight. Shutdown latency is
-		// therefore up to one poll timeout, which is why the timeouts are short
-		// and why Close is documented as taking that long to return.
-		//
-		// context.Cause rather than ctx.Err so that a reason attached by a
-		// future WithCancelCause would surface; today they are the same, since
-		// the context is a plain WithCancel.
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("binding %q: %w", reg.name, context.Cause(ctx))
-		default:
+		// nameTimeout turns a deadline into ErrWarmupTimeout and leaves every
+		// other error, cancellation included, as it is.
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("binding %q: %w", reg.name, l.nameTimeout(err))
 		}
 
-		event := c.Poll(timeout)
+		event := c.Poll(l.cfg.detector.pollTimeout())
 
 		if failure, fatal := l.classify(reg, event); fatal {
 			return fmt.Errorf("binding %q: %w", reg.name, failure)
 		}
+
 		if rec, ok := event.(*driver.Record); ok {
 			reg.apply(rec)
+
 			if applied := int(reg.warmupApplied.Load()); applied >= progressAt {
 				progressAt = applied + loadProgressEvery
 				l.cfg.observer.OnLoadProgress(reg.name, applied)
@@ -364,7 +339,12 @@ func (l *Loader) warmup(ctx context.Context, reg *registration, c driver.Consume
 
 	took := time.Since(started)
 	reg.warmupTookNs.Store(int64(took))
+
+	// This store is what stops warmupApplied counting — noteRecord only
+	// increments it while the phase is warm-up — so it has to happen after the
+	// count above has been read.
 	reg.phase.Store(phaseSteady)
+
 	l.cfg.observer.OnPhase(reg.name, PhaseSteady, applied, took)
 	logger.Info().Int("records", applied).Dur("took", took).Int("size", reg.size()).
 		Msg("topic read to end")
@@ -372,38 +352,93 @@ func (l *Loader) warmup(ctx context.Context, reg *registration, c driver.Consume
 	return nil
 }
 
-// serve applies live changes until the context is cancelled or the binding dies.
-func (l *Loader) serve(ctx context.Context, reg *registration, c driver.Consumer) {
+// nameTimeout reports the library's own error for a warm-up deadline, so a
+// caller can test errors.Is(err, ErrWarmupTimeout) rather than matching on
+// context.DeadlineExceeded.
+//
+// It supplies the identity; the layers above add the context, and %w at each
+// step is what lets one error carry both:
+//
+//	easykafkaconfig: warm-up failed: binding "PlayerConfig": warm-up timed out after 200ms
+//	                                 └─ context              └─ identity
+//
+// Start joins one of these per failing binding, so a single returned error can
+// report several timeouts and, say, an empty topic at once, and errors.Is is
+// true for each sentinel present in it.
+//
+// Any DeadlineExceeded reaching this point is the deadline Start derived,
+// because Start requires the context it is given to carry none of its own. A
+// caller who passes context.WithTimeout anyway gets their deadline reported as
+// ErrWarmupTimeout, which is a mislabel — narrow enough to accept, given how
+// much clearer this is than carrying a cause through driver calls that only
+// ever return ctx.Err().
+//
+// Every other error, cancellation included, is returned untouched.
+func (l *Loader) nameTimeout(err error) error {
+	if l.cfg.warmupTimeout > 0 && errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w after %s", ErrWarmupTimeout, l.cfg.warmupTimeout)
+	}
+
+	return err
+}
+
+// serveBinding applies live changes until the loader stops.
+//
+// It returns nothing: Start is long gone by now, so there is nobody to return
+// to. A fatal error is recorded on the loader instead, which is also what stops
+// the other bindings.
+func (l *Loader) serveBinding(ctx context.Context, reg *registration, c driver.Consumer) {
+	// This goroutine owns the consumer from here on, so it is the one that
+	// closes it. Closing a consumer another goroutine may still be polling is
+	// the one thing librdkafka handles worst.
+	defer func() {
+		reg.phase.Store(phaseStopped)
+		if err := c.Close(); err != nil {
+			l.cfg.logger.Warn().Err(err).Str("binding", reg.name).Msg("closing consumer")
+		}
+	}()
+
 	for {
-		// Non-blocking cancellation check between polls, as in warmup — see
-		// there for why it cannot be done any other way.
-		select {
-		case <-ctx.Done():
+		// Two ways to stop, checked together because neither needs telling
+		// apart here: the application is shutting down, or some binding —
+		// possibly this one — hit a fatal error. Err distinguishes them
+		// afterwards. This is why err is the stop signal as well as the reason.
+		if ctx.Err() != nil || l.Err() != nil {
 			return
-		default:
 		}
 
 		event := c.Poll(l.cfg.steadyPollTimeout)
 
 		if failure, fatal := l.classify(reg, event); fatal {
-			// The binding cannot recover, so its store would silently freeze at
-			// whatever it last held. Reported and propagated: the whole loader
-			// stops, Done closes, and a liveness probe can see it.
-			err := fmt.Errorf("binding %q: %w", reg.name, failure)
-			l.setErr(err)
-			l.cfg.logger.Error().Err(err).Str("binding", reg.name).
-				Msg("binding stopped after warm-up, configuration is now frozen")
-
-			if l.cfg.onFatal != nil {
-				l.cfg.onFatal(err)
-			}
-			l.stopConsumers()
+			l.bindingDied(fmt.Errorf("binding %q: %w", reg.name, failure))
 
 			return
 		}
+
 		if rec, ok := event.(*driver.Record); ok {
 			reg.apply(rec)
 		}
+	}
+}
+
+// bindingDied records the first fatal error and tells the application.
+//
+// Recording it is the whole mechanism: this cancels nothing and closes nothing,
+// because every other binding tests Err between polls and follows this one down.
+//
+// Only the first caller gets past the compare-and-swap, so the reason kept is
+// the one that explains the shutdown and the fatal handler runs exactly once
+// however many bindings die together. Acting on the swap's result is the point —
+// performing it and ignoring the answer would let the handler fire per binding.
+func (l *Loader) bindingDied(err error) {
+	if !l.err.CompareAndSwap(nil, &err) {
+		return
+	}
+
+	l.cfg.logger.Error().Err(err).Msg("binding stopped after warm-up, configuration is now frozen")
+
+	if l.cfg.onFatal != nil {
+		l.cfg.onFatal(err)
 	}
 }
 
@@ -421,30 +456,13 @@ func (l *Loader) classify(reg *registration, event driver.Event) (error, bool) {
 	return failure.Err, failure.Fatal
 }
 
-// Ready is closed once every topic has been read whole.
+// Err reports why the loader stopped: nil while serving and after a clean stop,
+// the fatal error if a binding died once serving.
 //
-// It is the channel form of a nil return from Start, for code that did not call
-// Start itself — a readiness probe, or a bootstrap that runs Start in a
-// goroutine so it can serve health checks while warming up. It closes only on
-// success: a failed warm-up leaves it open forever, so a probe never reports
-// ready on configuration that did not load.
-func (l *Loader) Ready() <-chan struct{} {
-	return l.ready
-}
-
-// Done is closed once the loader has stopped, whether from Close, a failed
-// warm-up, or a binding dying afterwards. Read Err for which.
-func (l *Loader) Done() <-chan struct{} {
-	return l.done
-}
-
-// Err reports why the loader stopped: nil while running or after a clean Close,
-// the joined failure after a failed warm-up, or the fatal error if a binding
-// died once serving.
-//
-// A non-nil Err with Done closed is what a liveness probe should fail on — the
-// stores are frozen at whatever they last held, and a process serving
-// configuration that can no longer change is worse than one that restarts.
+// A non-nil Err is what a liveness probe should fail on — the stores are frozen
+// at whatever they last held, and a process serving configuration that can no
+// longer change is worse than one that restarts. WithFatalHandler is the
+// push-based equivalent.
 func (l *Loader) Err() error {
 	if err := l.err.Load(); err != nil {
 		return *err
@@ -453,56 +471,26 @@ func (l *Loader) Err() error {
 	return nil
 }
 
-// Close stops every consumer and waits for them, bounded by ctx.
+// WaitUntilStopped blocks until every consumer has stopped and been closed,
+// then reports why the loader stopped: nil after a clean shutdown, the fatal
+// error if Kafka took it down.
 //
-// Idempotent, and safe at any point in the lifecycle including mid-warm-up. If
-// ctx expires first, Close returns its error while the consumers keep shutting
-// down in the background.
-func (l *Loader) Close(ctx context.Context) error {
-	l.closeOnce.Do(l.stopConsumers)
+// It stops nothing. Cancelling the context passed to Start does that; this only
+// observes that it happened, so calling it without cancelling blocks until the
+// process ends. Returning establishes three things: no polling goroutine is
+// running, every librdkafka handle has been released, and no store is being
+// written any more — so shutdown cannot race a record still being applied.
+//
+// No timeout is needed or accepted: a serving goroutine notices cancellation
+// between polls, so this returns within one steady poll timeout plus the
+// consumer's own Close.
+//
+// Safe to call on a loader that was never started, or whose Start failed, in
+// which case it returns immediately: nothing was ever running.
+func (l *Loader) WaitUntilStopped() error {
+	l.serving.Wait()
 
-	stopped := make(chan struct{})
-	go func() {
-		l.wg.Wait()
-		close(stopped)
-	}()
-
-	select {
-	case <-stopped:
-		l.finish()
-
-		return nil
-
-	case <-ctx.Done():
-		return fmt.Errorf("easykafkaconfig: close timed out: %w", ctx.Err())
-	}
-}
-
-// stopConsumers cancels the context every binding polls under. A no-op before
-// Start, so Close is safe at any point in the lifecycle.
-func (l *Loader) stopConsumers() {
-	l.mu.Lock()
-	cancel := l.cancel
-	l.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-}
-
-// finish closes Done exactly once.
-func (l *Loader) finish() {
-	l.doneOnce.Do(func() { close(l.done) })
-}
-
-// setErr records the first reason the loader stopped. Later failures are
-// logged by their own caller but do not overwrite the first, which is the one
-// that explains the shutdown.
-func (l *Loader) setErr(err error) {
-	if err == nil {
-		return
-	}
-	l.err.CompareAndSwap(nil, &err)
+	return l.Err()
 }
 
 // Stats returns a snapshot of every binding, in the order they were bound.
