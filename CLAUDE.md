@@ -9,11 +9,16 @@ them live for the lifetime of the process. A service declares one binding per to
 startup until every topic is read to its end, then does O(1) type-safe lookups while the library applies
 changes in the background.
 
-**Status: phase P0 (scaffolding).** Tooling and CI are in place; the API is designed, not implemented.
-The authoritative design and phased plan live in the `srm-specs` repo:
-`specs/easykafka/001-config-from-compact-topics/{requirements,api-design,implementation-plan}.md`.
-Read the design before adding code — the decisions below are settled there, not open for re-litigation
-in a code review.
+**Status: usable end to end.** A loader reads compacted topics into typed stores, with warm-up,
+tombstones, live updates, lifecycle and introspection. Still to come: the alternative warm-up detectors
+(only `PartitionEOF`, the default, exists), a logging `Observer`, and integration tests for the loader
+— the eight that exist cover `internal/driver` only.
+
+The authoritative design and phased plan live in the `srm-specs` repo, under
+`specs/easykafka/001-config-from-compact-topics/`: `requirements.md`, `api-design.md`,
+`loader-design.md` and `implementation-plan.md`. Read them before adding code — the decisions below are
+settled there, not open for re-litigation in a code review. Note that `loader-design.md` supersedes
+`api-design.md` §4.3 for the loader's lifecycle.
 
 ## Commands
 
@@ -66,11 +71,14 @@ Version pins are single-sourced:
 - `store.go` — `Store[K,V]`: the typed concurrent map (`Get`/`GetOrNil`/`Len`/`All`/`Keys`)
 - `binding.go` — `Binding[K,V]` plus ready-made codecs (`StringKey`, `IntKey`, `JSONValue`) and
   tombstone policies
-- `loader.go` — `Loader`: `Bind`/`BindTo` (generic methods), `Start`/`Ready`/`Done`/`Err`/`Close`,
+- `loader.go` — `Loader`: `Bind`/`BindTo` (generic methods), `Start`, `WaitUntilStopped`, `Err`,
   `Stats`, `LookupRaw`
+- `registration.go` — the non-generic per-binding state the loader holds, plus the type-erased
+  `apply`/`lookup`/`size` closures that let one loader carry bindings with different `K`/`V`
 - `options.go` — functional options
-- `detect.go` — warm-up detectors: `PartitionEOF` (default), `IdlePolls`, `Watermarks`
-- `observer.go` — `Observer`, `NopObserver`, `LogObserver`, `BindingStats`
+- `detect.go` — warm-up detectors: `PartitionEOF` only. `IdlePolls` and `Watermarks` are designed but
+  not written
+- `observer.go` — `Observer`, `NopObserver`, `BindingStats`. `LogObserver` is not written
 
 ### Internal packages
 - `internal/driver/` — **the only package that may import `confluent-kafka-go`**: consumer construction
@@ -87,13 +95,35 @@ Version pins are single-sourced:
   lifecycle state (`Err()`), or `Observer` callbacks.
 - **Generic methods** (Go 1.27) let `Bind` be a method on `*Loader`; the loader itself stays non-generic
   and stores closures, since it holds bindings with different `K`/`V` pairs.
+- **Warm-up finishes before serving starts.** Two generations of goroutine, one per binding each, that
+  never overlap: transient warm-up goroutines return their outcome into a pre-sized slice, and `Start`
+  waits on a local `sync.WaitGroup`; long-lived serving goroutines are started only afterwards. That is
+  why warm-up results need no channel, why the phase change needs no signal, and why a consumer can
+  pass from one generation to the next without a lock. Do not reintroduce a channel here.
+- **The caller owns stopping.** No `Ready`, `Done` or `Close`, and no cancellation inside the loader:
+  cancel the context passed to `Start`, then call `WaitUntilStopped`. `Start`'s context must carry no
+  deadline of its own, since one that fires would stop the consumers.
+- **A fatal error stops every binding, and there is no degraded mode.** It stops them by recording
+  itself in `l.err`, which each serving goroutine tests between polls — so `err` is the stop signal as
+  well as the reason. Non-fatal errors (broker maintenance, leader elections) keep polling and are only
+  reported.
+- **Each consumer is closed by the goroutine that last polled it.** Before the handover they belong to
+  `Start`, which closes them all if any binding fails warm-up; after it, each belongs to its serving
+  goroutine. `warmUpBinding` never closes one.
 
 ### Testing approach
-- `tests/unit/` — pure Go logic, no Kafka dependency. The loader and detectors are tested against a fake
-  driver, with `testing/synctest` for anything time-dependent.
-- `tests/integration/` — real Kafka via testcontainers-go: warm-up via partition EOF, manual-assign
-  behaviour (including the `SubscribeTopics` control case), tombstones, restart re-read, empty topic,
-  live updates, decode errors, reconnection.
+- `tests/unit/` — pure Go logic, no Kafka dependency: 159 tests against a scripted fake consumer
+  (`fake_consumer_test.go`), covering warm-up, the apply pipeline, the lifecycle and the options.
+  Timing is handled with short real timeouts rather than `testing/synctest`.
+- `tests/integration/` — real Kafka via testcontainers-go: **8 tests, all of `internal/driver`** —
+  manual-assign behaviour including the `SubscribeTopics` control case, partition EOF, watermarks and
+  positions, close-with-calls-in-flight. **The loader has no integration tests yet**, so warm-up,
+  tombstones, restart re-read, live updates and the fatal path have only ever run against the fake.
+- Two tests exist to catch failures nothing else can see, and are worth understanding before editing
+  them. `TestLoaderFailureIsBothIdentifiableAndDescriptive` fails if a `%w` in the error chain becomes
+  `%v` — which leaves the message byte-identical while every `errors.Is` silently returns false.
+  `fake_consumer_fidelity_test.go` fails if the fake stops giving EOF events a realistic offset, which
+  no other test reads.
 
 ### Key dependencies
 - `confluent-kafka-go/v2` — underlying Kafka client (pinned to the same version as `easykafka-go` and
