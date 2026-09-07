@@ -36,14 +36,18 @@ func loaderWith(t *testing.T, fakes map[string]*fakeConsumer, extra ...ekconfig.
 	return loader
 }
 
-// stopLoader registers the shutdown every test needs: t.Context is cancelled
-// just before cleanups run, which is what stops the consumers, and
-// WaitUntilStopped then waits for them to exit and close.
+// waitForLoaderOnTestCleanup makes the test wait, when it finishes, for the
+// loader to have stopped.
+//
+// t.Context is cancelled just before cleanups run, and that is what makes the
+// consumers exit; this waits for them. So the loader is fully stopped and every
+// consumer closed before the test completes rather than afterwards, which is
+// what keeps a goroutine from outliving the test that started it.
 //
 // The reason is logged rather than asserted, because several tests deliberately
 // end with a binding dead — there a non-nil return is the expected outcome, not
 // a failure.
-func stopLoader(t *testing.T, loader *ekconfig.Loader) {
+func waitForLoaderOnTestCleanup(t *testing.T, loader *ekconfig.Loader) {
 	t.Helper()
 
 	t.Cleanup(func() {
@@ -88,7 +92,7 @@ func TestLoaderWarmsUpAndPopulatesStore(t *testing.T) {
 	players := loader.Bind(playerBinding("PlayerConfig", topic))
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	assert.Equal(t, 2, players.Len(), "the store must be complete when Start returns")
 	assert.Equal(t, 10, players.GetOrNil("p1").Limit)
@@ -152,7 +156,7 @@ func TestLoaderAppliesTombstones(t *testing.T) {
 	players := loader.Bind(playerBinding("PlayerConfig", "players"))
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	assert.Equal(t, 1, players.Len())
 	assert.True(t, players.Has("keep"))
@@ -195,9 +199,9 @@ func TestLoaderEmptyTopic(t *testing.T) {
 
 		// Needed here but not in the subtest above: warm-up succeeded, so a
 		// serving goroutine is now polling and has to be waited for. A failed
-		// warm-up starts none, which is why the other subtest omits this.
+		// warm-up starts none, which is why the other subtest omits it.
 		require.NoError(t, loader.Start(t.Context()))
-		stopLoader(t, loader)
+		waitForLoaderOnTestCleanup(t, loader)
 
 		assert.Equal(t, 0, players.Len())
 	})
@@ -310,7 +314,7 @@ func TestLoaderAppliesLiveUpdatesAfterWarmup(t *testing.T) {
 	players := loader.Bind(playerBinding("PlayerConfig", "players"))
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	require.Equal(t, 1, players.GetOrNil("p1").Limit)
 
@@ -402,7 +406,7 @@ func TestLoaderSurvivesNonFatalErrors(t *testing.T) {
 	players := loader.Bind(playerBinding("PlayerConfig", "players"))
 
 	require.NoError(t, loader.Start(t.Context()), "a recoverable error must not fail warm-up")
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	assert.Equal(t, 1, players.Len())
 	assert.NoError(t, loader.Err())
@@ -526,7 +530,7 @@ func TestLoaderStartTwice(t *testing.T) {
 	loader.Bind(playerBinding("PlayerConfig", "players"))
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	err := loader.Start(t.Context())
 	require.Error(t, err)
@@ -562,7 +566,7 @@ func TestLoaderBindPanics(t *testing.T) {
 		loader := loaderWith(t, map[string]*fakeConsumer{"players": fake})
 		loader.Bind(playerBinding("PlayerConfig", "players"))
 		require.NoError(t, loader.Start(t.Context()))
-		stopLoader(t, loader)
+		waitForLoaderOnTestCleanup(t, loader)
 
 		assert.PanicsWithValue(t,
 			`easykafkaconfig: Bind("Late") after Start: bind after start`,
@@ -621,7 +625,7 @@ func TestLoaderBindTo(t *testing.T) {
 	loader.BindTo(playerBinding("PlayerConfig", "players"), stores.Players)
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	assert.Equal(t, 7, stores.Players.GetOrNil("p1").Limit)
 }

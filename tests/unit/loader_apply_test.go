@@ -109,7 +109,7 @@ func TestLoaderFilterRejectsRecords(t *testing.T) {
 	players := loader.Bind(binding)
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	assert.Equal(t, 1, players.Len())
 	assert.True(t, players.Has("keep"))
@@ -141,7 +141,7 @@ func TestLoaderSkipsUndecodableRecords(t *testing.T) {
 	players := loader.Bind(playerBinding("PlayerConfig", "players"))
 
 	require.NoError(t, loader.Start(t.Context()), "bad data must not fail warm-up")
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	assert.Equal(t, 2, players.Len(), "the two decodable records must be stored")
 	assert.True(t, players.Has("good"))
@@ -190,7 +190,7 @@ func TestLoaderSkipsUndecodableKeys(t *testing.T) {
 	})
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	assert.Equal(t, 1, templates.Len())
 	assert.True(t, templates.Has(42))
@@ -226,7 +226,7 @@ func TestLoaderKeyFromValueAndMismatchReporting(t *testing.T) {
 	players := loader.Bind(binding)
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	// Stored under the payload's key, not the record's.
 	assert.True(t, players.Has("payload-key"))
@@ -264,7 +264,7 @@ func TestLoaderTombstoneUsesRecordKeyDespiteKeyFromValue(t *testing.T) {
 	players := loader.Bind(binding)
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	assert.Equal(t, 0, players.Len(), "the tombstone must delete the key the record carried")
 
@@ -291,7 +291,7 @@ func TestLoaderObserverDistinguishesWarmupFromSteady(t *testing.T) {
 	loader.Bind(playerBinding("PlayerConfig", "players"))
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	require.Equal(t, 1, obs.snapshot().warmupUpserts)
 
@@ -382,7 +382,7 @@ func TestLoaderLookupRaw(t *testing.T) {
 	})
 
 	require.NoError(t, loader.Start(t.Context()))
-	stopLoader(t, loader)
+	waitForLoaderOnTestCleanup(t, loader)
 
 	// A string-keyed binding.
 	value, ok, err := loader.LookupRaw("PlayerConfig", "p1")
