@@ -29,7 +29,12 @@ type Consumer interface {
 	AssignAll(ctx context.Context) ([]int32, error)
 
 	// Poll waits up to timeout for one event and always returns a non-nil
-	// Event. Must be called from a single goroutine.
+	// Event.
+	//
+	// Must not be called concurrently: one goroutine at a time, though which
+	// goroutine that is may change. Handing a consumer from one goroutine to
+	// another is supported, and is how the loader passes it from warm-up to
+	// serving, provided the first has returned before the second starts.
 	Poll(timeout time.Duration) Event
 
 	// Watermarks returns the first and next-to-be-written offsets for one
