@@ -146,10 +146,11 @@ func (f *fakeConsumer) Poll(timeout time.Duration) driver.Event {
 // carries the position a real one would.
 //
 // A real PartitionEOF reports the offset the consumer reached, which equals the
-// partition's high watermark at that moment — one past its last record. Nothing
-// in the library reads EOF.Offset today, only EOF.Partition, so a zero would go
-// unnoticed; a watermark-based detector would read it, and would then be tested
-// against a value no broker produces.
+// partition's high watermark at that moment — one past its last record. The
+// driver copies that field into driver.EOF faithfully, but nothing reads it
+// back today: the detector uses EOF.Partition alone. So a zero here would go
+// unnoticed, while a watermark-based detector would read it and would then be
+// tested against a value no broker produces.
 func (f *fakeConsumer) deliver(ev driver.Event) driver.Event {
 	f.mu.Lock()
 	defer f.mu.Unlock()
