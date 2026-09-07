@@ -31,6 +31,11 @@ type fakeConsumer struct {
 	closed   bool
 	assigned bool
 
+	// nextOffset is the offset each partition would write next, which is what a
+	// partition's high watermark means. Tracked from the records actually
+	// delivered so a scripted EOF can carry a realistic position.
+	nextOffset map[int32]int64
+
 	// live receives events pushed after the script is exhausted, which is how a
 	// test delivers a change once the loader is serving.
 	live chan driver.Event
@@ -40,6 +45,7 @@ func newFakeConsumer(partitions []int32, script ...driver.Event) *fakeConsumer {
 	return &fakeConsumer{
 		partitions: partitions,
 		script:     script,
+		nextOffset: make(map[int32]int64),
 		live:       make(chan driver.Event, 64),
 	}
 }
@@ -67,6 +73,11 @@ func tombstone(partition int32, offset int64, key string) *driver.Record {
 
 // eofAll returns one EOF per partition, which is what completes warm-up under
 // the default detector.
+//
+// Offset is left unset here and filled in when the event is delivered, from the
+// records that actually preceded it — see deliver. Scripting it by hand would
+// mean restating every record's offset at the call site and keeping the two in
+// step.
 func eofAll(partitions ...int32) []driver.Event {
 	out := make([]driver.Event, 0, len(partitions))
 	for _, p := range partitions {
@@ -116,7 +127,7 @@ func (f *fakeConsumer) Poll(timeout time.Duration) driver.Event {
 		f.script = f.script[1:]
 		f.mu.Unlock()
 
-		return ev
+		return f.deliver(ev)
 	}
 	f.mu.Unlock()
 
@@ -124,10 +135,46 @@ func (f *fakeConsumer) Poll(timeout time.Duration) driver.Event {
 	// events a test pushes in while the loader is serving.
 	select {
 	case ev := <-f.live:
-		return ev
+		return f.deliver(ev)
 	case <-time.After(timeout):
 		return driver.Idle{}
 	}
+}
+
+// deliver is the last step before an event leaves the fake, whether it came
+// from the script or was pushed in afterwards. It exists so a scripted EOF
+// carries the position a real one would.
+//
+// A real PartitionEOF reports the offset the consumer reached, which equals the
+// partition's high watermark at that moment — one past its last record. Nothing
+// in the library reads EOF.Offset today, only EOF.Partition, so a zero would go
+// unnoticed; a watermark-based detector would read it, and would then be tested
+// against a value no broker produces.
+func (f *fakeConsumer) deliver(ev driver.Event) driver.Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	switch e := ev.(type) {
+	case *driver.Record:
+		if f.nextOffset == nil {
+			f.nextOffset = make(map[int32]int64)
+		}
+		if next := e.Offset + 1; next > f.nextOffset[e.Partition] {
+			f.nextOffset[e.Partition] = next
+		}
+
+	case driver.EOF:
+		// Filled in only when unset, so a test that wants a specific position
+		// can still say so. An untouched partition stays at 0, which is exactly
+		// an empty partition's watermark.
+		if e.Offset == 0 {
+			e.Offset = f.nextOffset[e.Partition]
+
+			return e
+		}
+	}
+
+	return ev
 }
 
 // push delivers an event to a serving loader.
