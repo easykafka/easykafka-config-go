@@ -94,13 +94,14 @@ func run() error {
 
 	// Produce to the topic in another terminal and the lines appear here:
 	//
-	//	docker exec -i kafka /opt/kafka/bin/kafka-console-producer.sh \
-	//	    --bootstrap-server localhost:9092 \
-	//	    --topic player-config.compact \
-	//	    --property parse.key=true --property key.separator=:
-	//	player-42:{"playerId":"player-42","limit":500}
+	//	echo 'player-42:{"playerId":"player-42","limit":500}' | docker exec -i kafka \
+	//	    /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 \
+	//	    --topic player-config.compact --property parse.key=true --property key.separator=:
 	//
-	// An empty value deletes the key, which is what a tombstone is.
+	// An empty value deletes the key, which is what a tombstone is: send
+	// 'player-42:' the same way. A piped record rather than an interactive
+	// producer, because a stray blank line makes that one exit with "No key
+	// separator found".
 	<-ctx.Done()
 
 	// Cancelling stopped the consumers; this waits for them to finish and

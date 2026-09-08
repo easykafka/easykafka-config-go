@@ -82,14 +82,25 @@ change as it arrives:
 go run ./examples/quickstart
 ```
 
-In another terminal, produce a record and watch it land. An empty value is a tombstone, so the second
-line deletes the key again:
+In another terminal, produce a record and watch it land:
 
 ```bash
-docker exec -i kafka /opt/kafka/bin/kafka-console-producer.sh     --bootstrap-server localhost:9092 --topic player-config.compact     --property parse.key=true --property key.separator=:
-player-42:{"playerId":"player-42","limit":500}
-player-42:
+echo 'player-42:{"playerId":"player-42","limit":500}' | docker exec -i kafka \
+    /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 \
+    --topic player-config.compact --property parse.key=true --property key.separator=:
 ```
+
+An empty value is a tombstone, so this removes the key again:
+
+```bash
+echo 'player-42:' | docker exec -i kafka \
+    /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 \
+    --topic player-config.compact --property parse.key=true --property key.separator=:
+```
+
+Each is a single command that reads its record from a pipe. Running the producer interactively and
+typing the records works too, but a stray blank line ends it with `No key separator found on line
+number 1`, which is a confusing way to find that out.
 
 ## 🚀 Usage
 
