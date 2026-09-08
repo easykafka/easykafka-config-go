@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/easykafka/easykafka-config-go/internal/driver"
+	"github.com/rs/zerolog"
 )
 
 // registration is one bound topic as the loader sees it.
@@ -108,6 +109,7 @@ func (r *registration) stats() BindingStats {
 // record would be reported as warm-up for the life of the process.
 func applyFunc[K comparable, V any](
 	obs Observer,
+	errLog zerolog.Logger,
 	b Binding[K, V],
 	store *Store[K, V],
 	reg *registration,
@@ -125,6 +127,8 @@ func applyFunc[K comparable, V any](
 		key, err := b.DecodeKey(rec.Key)
 		if err != nil {
 			reg.decodeErrors.Add(1)
+			errLog.Warn().Err(err).Str("binding", b.Name).Bytes("key", rec.Key).
+				Msg("record skipped: could not decode key")
 			obs.OnDecodeError(b.Name, err, rec.Key)
 
 			return
@@ -144,6 +148,8 @@ func applyFunc[K comparable, V any](
 		value, err := b.DecodeValue(rec.Payload)
 		if err != nil {
 			reg.decodeErrors.Add(1)
+			errLog.Warn().Err(err).Str("binding", b.Name).Bytes("key", rec.Key).
+				Msg("record skipped: could not decode payload")
 			obs.OnDecodeError(b.Name, err, rec.Payload)
 
 			return
@@ -155,6 +161,9 @@ func applyFunc[K comparable, V any](
 				// Worth reporting rather than resolving: the entry goes under
 				// the payload's key, while a future tombstone would carry the
 				// record's, so it could never be deleted.
+				errLog.Warn().Str("binding", b.Name).
+					Str("record_key", fmt.Sprint(key)).Str("payload_key", fmt.Sprint(derived)).
+					Msg("record key and payload key disagree")
 				obs.OnKeyMismatch(b.Name, fmt.Sprint(key), fmt.Sprint(derived))
 			}
 			key = derived

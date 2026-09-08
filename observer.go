@@ -56,8 +56,14 @@ type Observer interface {
 	// warm-up, for topics large enough that the initial read takes a while.
 	OnLoadProgress(name string, applied int)
 
-	// OnPhase reports a binding changing phase, with how many records were
-	// applied in the phase just ended and how long it lasted.
+	// OnPhase reports a binding finishing warm-up, with how many records the
+	// initial read applied and how long it took. phase is therefore always
+	// PhaseSteady.
+	//
+	// It does not report a binding stopping, even though Stats will show
+	// PhaseStopped. Reporting it would mean supplying a serving record count
+	// and duration, and nothing tracks either — for a process that serves for
+	// weeks, neither figure carries information worth the counters.
 	OnPhase(name string, phase Phase, applied int, took time.Duration)
 
 	// OnKafkaError reports a Kafka-level error. Non-fatal ones are routine —

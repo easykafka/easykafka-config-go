@@ -560,7 +560,7 @@ func (l *Loader) BindTo[K comparable, V any](b Binding[K, V], store *Store[K, V]
 		allowEmpty: b.AllowEmpty,
 		size:       store.Len,
 	}
-	reg.apply = applyFunc(l.cfg.observer, b, store, reg)
+	reg.apply = applyFunc(l.cfg.observer, l.cfg.errorLogger(), b, store, reg)
 	reg.lookup = lookupFunc(b, store)
 
 	l.add(reg)

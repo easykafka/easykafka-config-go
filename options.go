@@ -37,9 +37,10 @@ type loaderConfig struct {
 	warmupTimeout     time.Duration // bound on Start; zero means wait indefinitely
 	metadataTimeout   time.Duration // bound on the partition discovery before assigning
 
-	logger   zerolog.Logger // lifecycle and connection events, never individual records
-	observer Observer       // per-record reporting; NopObserver when unset
-	onFatal  func(error)    // called once if a binding dies after warm-up; may be nil
+	logger    zerolog.Logger // lifecycle and connection events, never individual records
+	observer  Observer       // per-record reporting; NopObserver when unset
+	onFatal   func(error)    // called once if a binding dies after warm-up; may be nil
+	logErrors bool           // log decode errors and key mismatches; see WithErrorLogging
 
 	// consumerFactory builds each binding's consumer. Defaults to the real
 	// driver; see WithConsumerFactory.
@@ -261,6 +262,22 @@ func WithFatalHandler(fn func(error)) Option {
 	}
 }
 
+// WithErrorLogging makes the library log a warning for every record it skips
+// because the key or payload could not be decoded, and for every key mismatch.
+//
+// Off by default. Everything else the library has to say it already says: the
+// loader logs the lifecycle and the driver logs Kafka errors. These two reach
+// only the Observer, so a service that wires none skips bad records in silence,
+// and whether that deserves a log line is its decision rather than the
+// library's. The Observer is told either way.
+func WithErrorLogging() Option {
+	return func(c *loaderConfig) error {
+		c.logErrors = true
+
+		return nil
+	}
+}
+
 // WithConsumerFactory replaces the function that builds each binding's Kafka
 // consumer.
 //
@@ -281,6 +298,21 @@ func WithConsumerFactory(fn func(driver.Config) (driver.Consumer, error)) Option
 
 		return nil
 	}
+}
+
+// errorLogger returns the logger that decode errors and key mismatches are
+// written to: the configured one when WithErrorLogging is set, and a disabled
+// logger otherwise.
+//
+// Returning a disabled logger rather than a flag is what keeps the call sites
+// free of a condition — zerolog.Nop discards without formatting, so logging
+// unconditionally costs nothing when the option is off.
+func (c loaderConfig) errorLogger() zerolog.Logger {
+	if c.logErrors {
+		return c.logger
+	}
+
+	return zerolog.Nop()
 }
 
 // consumerConfig builds the driver configuration for one binding.
