@@ -1,6 +1,6 @@
 package integration
 
-// T-6.1 and T-6.2: the loader against a real broker.
+// Warm-up, against a real broker.
 
 import (
 	"testing"

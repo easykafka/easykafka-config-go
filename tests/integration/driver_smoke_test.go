@@ -72,7 +72,7 @@ func drainToEOF(t *testing.T, c driver.Consumer, partitions int) drained {
 	return got
 }
 
-// The P2 smoke test: the driver reads a real compacted topic end to end.
+// The driver smoke test: it reads a real compacted topic end to end.
 //
 // It exercises the paths no fake can cover — the librdkafka config map,
 // partition discovery, explicit assignment, the poll loop and event

@@ -1,6 +1,6 @@
 package integration
 
-// T-6.6 and T-6.8: what happens across a restart, and on the way down.
+// What happens across a restart, and on the way down.
 
 import (
 	"context"

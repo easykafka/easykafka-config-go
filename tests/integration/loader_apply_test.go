@@ -1,7 +1,6 @@
 package integration
 
-// T-6.3, T-6.4, T-6.5 and T-6.7: what the loader does with the records a real
-// broker delivers.
+// What the loader does with the records a real broker delivers.
 
 import (
 	"testing"

@@ -1,6 +1,6 @@
 package integration
 
-// T-6.9: the broker goes away and comes back.
+// The broker goes away and comes back.
 
 import (
 	"testing"
