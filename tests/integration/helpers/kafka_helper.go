@@ -5,6 +5,8 @@ package helpers
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -12,6 +14,9 @@ import (
 	"time"
 
 	kfk "github.com/confluentinc/confluent-kafka-go/v2/kafka"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/kafka"
 )
 
@@ -77,6 +82,148 @@ func SharedCluster(t *testing.T) *Cluster {
 	}
 
 	return sharedCluster
+}
+
+// DedicatedCluster starts a broker for one test and terminates it afterwards.
+//
+// For tests that must disturb the broker itself — stopping it to watch a client
+// reconnect — which the shared cluster cannot host, since every other test in
+// the binary is using it concurrently. Costs a container start, so it is worth
+// it only for that.
+func DedicatedCluster(t *testing.T) *Cluster {
+	t.Helper()
+
+	ctx := context.Background()
+
+	// The host port is pinned rather than left to Docker, because a stop and
+	// start would otherwise hand the broker a different one — verified: 55008
+	// became 55009 — and a client that survived the outage would then be
+	// reconnecting to nothing. Pinning it is what makes the outage look to the
+	// client like the broker it already knows going away and coming back.
+	port := freePort(t)
+
+	broker, err := kafka.Run(ctx, kafkaImage(),
+		kafka.WithClusterID("ekconfig-dedicated"),
+		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
+			hc.PortBindings = network.PortMap{
+				// Both families. The broker advertises "localhost", which
+				// resolves to ::1 first, so an IPv4-only binding is refused by
+				// every client that gets that far — the admin client falls back
+				// to IPv4 and works, while the producer does not, which makes
+				// the failure look like a broken broker rather than a binding.
+				network.MustParsePort(kafkaBrokerPort): []network.PortBinding{
+					{HostIP: netip.IPv4Unspecified(), HostPort: port},
+					{HostIP: netip.IPv6Unspecified(), HostPort: port},
+				},
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatalf("starting dedicated kafka container: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := broker.Terminate(context.Background()); err != nil {
+			t.Logf("terminating dedicated kafka container: %v", err)
+		}
+	})
+
+	brokers, err := broker.Brokers(ctx)
+	if err != nil {
+		t.Fatalf("resolving broker addresses: %v", err)
+	}
+
+	return &Cluster{container: broker, Brokers: brokers}
+}
+
+// kafkaBrokerPort is the container port the Kafka module publishes.
+const kafkaBrokerPort = "9093/tcp"
+
+// freePort reserves a port by binding and releasing it, and returns it for the
+// container to claim.
+//
+// Racy in principle — something else could take it in between — but the window
+// is microseconds and the alternative is a hard-coded port that collides with
+// whatever is already running.
+func freePort(t *testing.T) string {
+	t.Helper()
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserving a host port: %v", err)
+	}
+	defer func() { _ = l.Close() }()
+
+	_, port, err := net.SplitHostPort(l.Addr().String())
+	if err != nil {
+		t.Fatalf("reading the reserved port: %v", err)
+	}
+
+	return port
+}
+
+// StopBroker stops the broker container, as an outage would.
+//
+// The host port mapping survives a stop, so the addresses handed to a client
+// before the outage are still the right ones when StartBroker brings it back —
+// which is what makes a reconnection observable rather than a permanent
+// failure. Only use this on a DedicatedCluster.
+func (c *Cluster) StopBroker(t *testing.T) {
+	t.Helper()
+
+	timeout := adminTimeout
+	if err := c.container.Stop(context.Background(), &timeout); err != nil {
+		t.Fatalf("stopping broker: %v", err)
+	}
+}
+
+// StartBroker brings a stopped broker back at the same address.
+func (c *Cluster) StartBroker(t *testing.T) {
+	t.Helper()
+
+	if err := c.container.Start(context.Background()); err != nil {
+		t.Fatalf("restarting broker: %v", err)
+	}
+
+	// The addresses must not have moved, or a client that survived the outage
+	// would be reconnecting to nothing and the test would prove the opposite of
+	// what it claims.
+	brokers, err := c.container.Brokers(context.Background())
+	if err != nil {
+		t.Fatalf("resolving broker addresses after restart: %v", err)
+	}
+	if strings.Join(brokers, ",") != strings.Join(c.Brokers, ",") {
+		t.Fatalf("broker moved across the restart: was %v, now %v — this test cannot say anything "+
+			"about reconnection", c.Brokers, brokers)
+	}
+
+	c.waitReady(t)
+}
+
+// waitReady blocks until the broker answers a metadata request.
+//
+// Starting a container is not the same as the broker inside it being ready, and
+// testcontainers does not re-apply its wait strategy to a restart — so without
+// this, the first produce after StartBroker races Kafka's startup and fails
+// with everything undelivered.
+func (c *Cluster) waitReady(t *testing.T) {
+	t.Helper()
+
+	admin, err := kfk.NewAdminClient(&kfk.ConfigMap{"bootstrap.servers": c.brokerList()})
+	if err != nil {
+		t.Fatalf("creating admin client to await readiness: %v", err)
+	}
+	defer admin.Close()
+
+	deadline := time.Now().Add(adminTimeout)
+	for time.Now().Before(deadline) {
+		if _, err := admin.GetMetadata(nil, true, 2_000); err == nil {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	t.Fatalf("broker did not become ready within %s of being restarted", adminTimeout)
 }
 
 // UniqueTopic returns a topic name unique to this test, so tests sharing the

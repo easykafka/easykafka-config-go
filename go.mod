@@ -9,11 +9,17 @@ go 1.27.0
 //   and takes no dependency on easykafka-go.
 // - zerolog: structured logging, same version as easykafka-go
 // - testify: assertions in the unit and integration suites, same version as easykafka-go
-// - testcontainers-go: real Kafka for the integration suite, same version as easykafka-go
+// - testcontainers-go: real Kafka for the integration suite, same version as easykafka-go. Direct
+//   rather than transitive because the reconnection test pins the broker's host port, which needs
+//   WithHostConfigModifier.
+// - moby/moby/api: the docker types that modifier takes. Not a dependency of the library itself — no
+//   non-test file imports it — and the version is whatever testcontainers-go already resolved to.
 require (
 	github.com/confluentinc/confluent-kafka-go/v2 v2.15.0
+	github.com/moby/moby/api v1.55.0
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.12.1
+	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/kafka v0.44.0
 )
 
@@ -44,7 +50,6 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.3.3 // indirect
-	github.com/moby/moby/api v1.55.0 // indirect
 	github.com/moby/moby/client v0.5.1 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
@@ -56,7 +61,6 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.7 // indirect
 	github.com/sirupsen/logrus v1.10.1 // indirect
-	github.com/testcontainers/testcontainers-go v0.44.0 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
