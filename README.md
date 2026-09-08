@@ -25,8 +25,9 @@
 
 Compacted Kafka topics as typed, thread-safe, in-memory maps.
 
-**[How it works](developer-doc.md)** — the deep dive: lifecycle, guarantees and their limits, failure
-behaviour, the design decisions and what they cost, and how it compares with Kafka Streams.
+* **[How it works](developer-doc.md)** — the deep dive: lifecycle, guarantees and their limits, failure
+  behaviour, the design decisions and what they cost, and how it compares with Kafka Streams.
+* **[Changelog](CHANGELOG.md)** — what each release contains, and what it deliberately does not.
 
 > **Status: feature-complete, and built for services that must not start on incomplete configuration.**
 > A loader reads compacted topics into typed stores — warm-up, tombstones, live updates, lifecycle,
@@ -272,6 +273,12 @@ make test-integration  # requires Docker (testcontainers-go)
 make coverage          # unit + integration, -coverpkg=./...
 make help              # list all targets
 ```
+
+## 📜 Releases
+
+Version history is in [CHANGELOG.md](CHANGELOG.md); tagged releases appear on
+[pkg.go.dev](https://pkg.go.dev/github.com/easykafka/easykafka-config-go). Pre-1.0, the public API may
+still change in a minor release.
 
 ## 📄 Licence
 
