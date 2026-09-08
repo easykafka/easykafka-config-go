@@ -14,7 +14,7 @@
   </tr>
 </table>
 
-# 🗺️ easykafka-config-go
+# 📇 easykafka-config-go
 
 [![Build & Lint](https://github.com/easykafka/easykafka-config-go/actions/workflows/build-lint.yml/badge.svg)](https://github.com/easykafka/easykafka-config-go/actions/workflows/build-lint.yml)
 [![Unit Tests](https://github.com/easykafka/easykafka-config-go/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/easykafka/easykafka-config-go/actions/workflows/unit-tests.yml)
@@ -26,8 +26,9 @@
 Compacted Kafka topics as typed, thread-safe, in-memory maps.
 
 > **Status: work in progress, but usable end to end.** A loader reads compacted topics into typed
-> stores, with warm-up, tombstones, live updates and lifecycle. Still to come: the alternative warm-up
-> detectors (only `PartitionEOF`, the default, is implemented) and a logging `Observer`.
+> stores, with warm-up, tombstones, live updates and lifecycle. Still to come: a logging `Observer`,
+> and integration tests for the loader itself. `PartitionEOF` is deliberately the only warm-up
+> detector — see the design note below.
 
 ## 💡 Why easykafka-config-go?
 
@@ -54,6 +55,11 @@ confluent-kafka-go docs for platform specifics.
 ## 🚀 Usage
 
 ```go
+// Cancelling this is what stops the loader, so it is the process context —
+// the one cancelled on SIGINT/SIGTERM — and must carry no deadline of its own.
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+
 loader, err := ekconfig.NewLoader(
     ekconfig.WithBrokers("localhost:9092"),
     ekconfig.WithClientGroupID("my-config-reader"),
@@ -72,10 +78,22 @@ players := loader.Bind(ekconfig.Binding[string, PlayerConfig]{
 if err := loader.Start(ctx); err != nil {   // blocks until every topic is drained
     log.Fatal(err)
 }
-defer loader.Close(context.WithoutCancel(ctx))
 
 cfg := players.GetOrNil("player-42")        // typed; no assertions, no lock
+
+// ... serve traffic; the loader keeps applying changes in the background ...
+
+// On the way out: cancel, then wait. WaitUntilStopped returns once every
+// consumer has stopped and been closed, and reports why the loader stopped —
+// nil for a clean shutdown, the error if Kafka took it down.
+cancel()
+if err := loader.WaitUntilStopped(); err != nil {
+    log.Printf("config loader stopped: %v", err)
+}
 ```
+
+Note the order: `WaitUntilStopped` only waits, so the context has to be cancelled first. Writing both
+as `defer`s reverses them — defers run last-in-first-out — and the wait would block forever.
 
 ## 🧭 Design notes
 
@@ -84,9 +102,14 @@ cfg := players.GetOrNil("player-42")        // typed; no assertions, no lock
   created in the cluster. A `group.id` is still configured because the driver demands one — it is inert.
 * **Offsets are never committed.** A restart re-reads the topic by construction, which is what makes the
   in-memory map reproducible.
-* **Warm-up completion is detected, not guessed.** The default waits for `PartitionEOF` on every
-  assigned partition, so an empty topic is reported in milliseconds rather than after a timeout, and a
-  slow broker is never mistaken for a drained one. Watermark-based and idle-poll detectors are planned.
+* **Warm-up completion is detected, not guessed.** `PartitionEOF` waits for an end-of-partition report
+  on every assigned partition, so an empty topic is reported in milliseconds rather than after a
+  timeout, and a slow broker is never mistaken for a drained one. Watermark- and idle-poll-based
+  detectors were designed and deliberately not shipped: an idle-poll heuristic cannot tell a stalled
+  partition from a drained topic, which is the failure this one exists to rule out.
+* **Stopping belongs to the caller.** There is no cancellation inside the loader and nothing to close:
+  cancel the context you passed to `Start`, then call `WaitUntilStopped`. Each consumer is closed by
+  the goroutine that was polling it, so no librdkafka handle is ever closed from another goroutine.
 * **Nothing is fatal inside the library.** Empty required topic, bad payload, broker loss — all surface
   as errors, lifecycle state, or observer callbacks. Only the service decides to exit.
 
