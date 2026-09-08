@@ -79,7 +79,9 @@ Version pins are single-sourced:
 - `detect.go` — warm-up detection: `PartitionEOF` only, and by decision the only one. `IdlePolls` and
   `Watermarks` are fully designed in `srm-specs` (`detectors-design.md`) and deliberately deferred —
   do not implement them without a reason that document does not already answer
-- `observer.go` — `Observer`, `NopObserver`, `BindingStats`. `LogObserver` is not written
+- `observer.go` — `Observer`, `NopObserver`, `BindingStats`. There is deliberately no logging observer:
+  the loader logs its own lifecycle and the driver logs Kafka errors, so one would duplicate them.
+  Decode errors and key mismatches, which reach only the `Observer`, are covered by `WithErrorLogging`
 
 ### Internal packages
 - `internal/driver/` — **the only package that may import `confluent-kafka-go`**: consumer construction

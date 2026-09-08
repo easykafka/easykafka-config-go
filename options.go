@@ -167,8 +167,19 @@ func WithKafkaConfig(cfg map[string]any) Option {
 }
 
 // WithInitialLoadDetector chooses how the end of a topic is detected during
-// warm-up. Defaults to PartitionEOF, which is the only option that makes no
-// timing assumption.
+// warm-up, and sets the poll timeout used while reading it.
+//
+// PartitionEOF is the default and, for now, the only detector: it waits for the
+// broker to report every assigned partition exhausted, which makes no timing
+// assumption and reports an empty topic in milliseconds rather than after a
+// timeout. Alternatives based on idle polls and on watermarks are designed but
+// deliberately not built — an idle-poll heuristic in particular cannot tell a
+// stalled partition from a drained topic, which is the failure PartitionEOF
+// exists to rule out.
+//
+// So this option takes exactly one useful argument today. It is here because
+// the seam is worth keeping while those designs stand, and because the warm-up
+// poll timeout comes from the detector rather than from an option of its own.
 func WithInitialLoadDetector(d Detector) Option {
 	return func(c *loaderConfig) error {
 		if d == nil {

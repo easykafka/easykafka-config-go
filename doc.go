@@ -7,35 +7,55 @@
 // topic has been read to its end, and from then on performs O(1), type-safe
 // lookups while the library keeps applying changes in the background.
 //
-// # Status
+// For how it works underneath — the lifecycle, the guarantees and their limits,
+// the failure behaviour and the design decisions — see developer-doc.md in the
+// repository.
 //
-// Work in progress, but usable end to end: a loader reads compacted topics into
-// typed stores. The remaining gaps are the alternative warm-up detectors
-// (only PartitionEOF, the default, is implemented) and a logging Observer.
+// # Getting started
 //
-// # Usage
+// See the package example for a complete service, from the process context
+// through to shutdown. It is compiled with the tests, so unlike a snippet in a
+// comment it cannot drift away from the API it demonstrates.
 //
-//	loader, err := ekconfig.NewLoader(
-//	    ekconfig.WithBrokers("localhost:9092"),
-//	    ekconfig.WithClientGroupID("my-config-reader"),
-//	)
-//	if err != nil {
-//	    return err
-//	}
+// The shape of it: build a Loader, Bind one Binding per topic, call Start and
+// let it block, then read from the typed stores it returned. On the way out,
+// cancel the context Start was given and call WaitUntilStopped.
 //
-//	players := loader.Bind(ekconfig.Binding[string, PlayerConfig]{
-//	    Name:        "PlayerConfig",
-//	    Topic:       "player-config.compact",
-//	    DecodeKey:   ekconfig.StringKey,
-//	    DecodeValue: ekconfig.JSONValue[PlayerConfig],
-//	})
+// # What it guarantees
 //
-//	if err := loader.Start(ctx); err != nil {   // blocks until every topic is drained
-//	    return err
-//	}
-//	defer loader.Close(context.WithoutCancel(ctx))
+// Start returns nil only when every bound topic has been read to its end, so a
+// service that gets past it holds complete configuration rather than whatever
+// had arrived by then. Warm-up is all-or-nothing: one topic failing fails the
+// call, with every failure reported together rather than only the first.
 //
-//	cfg := players.GetOrNil("player-42")        // typed, no assertions, no lock
+// Offsets are never committed. A restart therefore rebuilds the stores by
+// construction rather than by luck, which is what makes them reproducible.
+//
+// Partitions are assigned explicitly and no consumer group is ever joined, so
+// every replica reads every partition, there is no rebalance, and adding a
+// replica costs the cluster nothing in coordination.
+//
+// # What it does not do
+//
+// It reads topics into maps. It does not join them, aggregate them, window them
+// or write anything back, and it holds each store wholly in memory — so a topic
+// larger than the memory available to a replica is out of scope, as is any state
+// derived from more than one topic.
+//
+// The library never terminates the process. An empty required topic, a payload
+// that will not decode, a broker that has gone for good: each surfaces as an
+// error, as Err, or as an Observer callback, and the service decides what to do.
+//
+// # Warm-up detection
+//
+// Kafka gives a consumer no end-of-topic signal, so the end has to be inferred.
+// PartitionEOF does it by waiting for the broker to report every assigned
+// partition exhausted, which makes no timing assumption and reports an empty
+// topic in milliseconds rather than after a timeout.
+//
+// It is currently the only detector, and the default. WithInitialLoadDetector
+// exists because alternatives are designed and may yet be built, and because it
+// carries the warm-up poll timeout.
 //
 // # Relationship to easykafka-go
 //
