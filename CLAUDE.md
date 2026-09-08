@@ -10,9 +10,9 @@ startup until every topic is read to its end, then does O(1) type-safe lookups w
 changes in the background.
 
 **Status: usable end to end.** A loader reads compacted topics into typed stores, with warm-up,
-tombstones, live updates, lifecycle and introspection. Still to come: the alternative warm-up detectors
-(only `PartitionEOF`, the default, exists), a logging `Observer`, and integration tests for the loader
-— the eight that exist cover `internal/driver` only.
+tombstones, live updates, lifecycle and introspection. Still to come: a logging `Observer`, and
+integration tests for the loader — the eight that exist cover `internal/driver` only. The alternative
+warm-up detectors are designed and deferred by decision, not outstanding work.
 
 The authoritative design and phased plan live in the `srm-specs` repo, under
 `specs/easykafka/001-config-from-compact-topics/`: `requirements.md`, `api-design.md`,
@@ -76,8 +76,9 @@ Version pins are single-sourced:
 - `registration.go` — the non-generic per-binding state the loader holds, plus the type-erased
   `apply`/`lookup`/`size` closures that let one loader carry bindings with different `K`/`V`
 - `options.go` — functional options
-- `detect.go` — warm-up detectors: `PartitionEOF` only. `IdlePolls` and `Watermarks` are designed but
-  not written
+- `detect.go` — warm-up detection: `PartitionEOF` only, and by decision the only one. `IdlePolls` and
+  `Watermarks` are fully designed in `srm-specs` (`detectors-design.md`) and deliberately deferred —
+  do not implement them without a reason that document does not already answer
 - `observer.go` — `Observer`, `NopObserver`, `BindingStats`. `LogObserver` is not written
 
 ### Internal packages
