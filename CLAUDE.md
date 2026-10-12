@@ -14,11 +14,10 @@ tombstones, live updates, lifecycle and introspection. Still to come: a logging 
 integration tests for the loader — the eight that exist cover `internal/driver` only. The alternative
 warm-up detectors are designed and deferred by decision, not outstanding work.
 
-The authoritative design and phased plan live in the `srm-specs` repo, under
-`specs/easykafka/001-config-from-compact-topics/`: `requirements.md`, `api-design.md`,
-`loader-design.md` and `implementation-plan.md`. Read them before adding code — the decisions below are
-settled there, not open for re-litigation in a code review. Note that `loader-design.md` supersedes
-`api-design.md` §4.3 for the loader's lifecycle.
+The authoritative design and phased plan live in the maintainers' design repository, outside this
+module: `requirements.md`, `api-design.md`, `loader-design.md` and `implementation-plan.md`. Read
+them before adding code — the decisions below are settled there, not open for re-litigation in a code
+review. Note that `loader-design.md` supersedes `api-design.md` §4.3 for the loader's lifecycle.
 
 ## Commands
 
@@ -61,9 +60,9 @@ Version pins are single-sourced:
 - `GOTESTSUM_VERSION` in the `Makefile` — CI installs it via `make install-test-tools` and runs tests
   through `make test-unit` / `make test-integration`, so flags cannot drift between local and CI.
 
-`.golangci.yml` is kept in sync with `easykafka-go` and the other SRM Go repos (`srm-common`,
-`srm-overask`, `srm-transactional-core`); `tests/` is excluded from the churn-heavy linters (`mnd`,
-`lll`, `dupl`, `gocognit`, `gosec`, `errcheck`, `unparam`).
+`.golangci.yml` is kept in sync with `easykafka-go` and the maintainers' other Go repositories;
+`tests/` is excluded from the churn-heavy linters (`mnd`, `lll`, `dupl`, `gocognit`, `gosec`,
+`errcheck`, `unparam`).
 
 ## Architecture
 
@@ -77,8 +76,8 @@ Version pins are single-sourced:
   `apply`/`lookup`/`size` closures that let one loader carry bindings with different `K`/`V`
 - `options.go` — functional options
 - `detect.go` — warm-up detection: `PartitionEOF` only, and by decision the only one. `IdlePolls` and
-  `Watermarks` are fully designed in `srm-specs` (`detectors-design.md`) and deliberately deferred —
-  do not implement them without a reason that document does not already answer
+  `Watermarks` are fully designed in the design repository (`detectors-design.md`) and deliberately
+  deferred — do not implement them without a reason that document does not already answer
 - `observer.go` — `Observer`, `NopObserver`, `BindingStats`. There is deliberately no logging observer:
   the loader logs its own lifecycle and the driver logs Kafka errors, so one would duplicate them.
   Decode errors and key mismatches, which reach only the `Observer`, are covered by `WithErrorLogging`
@@ -130,7 +129,7 @@ Version pins are single-sourced:
 
 ### Key dependencies
 - `confluent-kafka-go/v2` — underlying Kafka client (pinned to the same version as `easykafka-go` and
-  `srm-common` so one librdkafka build is in play)
+  the maintainers' services, so one librdkafka build is in play)
 - `zerolog` — structured logging
 - `testcontainers-go/modules/kafka` — integration test containers
 - `testify` — test assertions
