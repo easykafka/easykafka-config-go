@@ -1,0 +1,45 @@
+# Dependabot configuration — https://docs.github.com/en/code-security/dependabot
+#
+# Runs as a GitHub-hosted service (not an Actions workflow): checks weekly,
+# opens one PR per outdated dependency, minor/patch bumps grouped together.
+#
+# NOTE: workflows triggered by Dependabot PRs cannot read regular repository
+# secrets. CODECOV_TOKEN must also be added under
+# Settings -> Secrets and variables -> Dependabot, or coverage uploads on
+# those PRs will silently no-op.
+version: 2
+updates:
+  # Go module dependencies (go.mod / go.sum).
+  # Only direct requires are tracked; the `go` directive is never bumped.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/Prague"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Routine churn lands in one PR; major bumps stay individual, since
+      # those are the ones that break compilation and need real review.
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Action versions pinned in .github/workflows/*.yml
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/Prague"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
