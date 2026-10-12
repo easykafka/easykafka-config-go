@@ -225,7 +225,7 @@ the failure this one rules out.
 ## 🔀 Relationship to [easykafka-go](https://github.com/easykafka/easykafka-go)
 
 Sibling libraries, no dependency between them. `easykafka-go` is the right tool for **event** consumers,
-where handler functions, retry topics, DLQs and circuit breakers are exactly what you want. This library
+where handler functions, retry topics and dead-letter queues are exactly what you want. This library
 covers the one pattern that abstraction does not fit: a compacted topic read to its end, keyed by record
 key, with no offset commits and no retry semantics. It talks to `confluent-kafka-go` directly.
 
