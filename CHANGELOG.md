@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) — with the usual pre-1.0 caveat that the
 public API may still change in a minor release.
 
+## [0.1.1]
+
+A maintenance release: no change to the API or to the loader's behaviour.
+
+### Changed
+
+- **Requires `confluent-kafka-go` 2.16.0** (librdkafka 2.16), up from 2.15.0. It brings 2.15.1's
+  fix for `Consumer.Close()` hanging indefinitely after a fatal consumer error, and librdkafka 2.16's
+  fixes, among them re-bootstrapping when every known broker has gone stale and bundled OpenSSL and
+  libcurl security updates. The same version as `easykafka-go`, so one librdkafka build is in play.
+
 ## [0.1.0]
 
 First release.
@@ -50,4 +61,5 @@ These are named because the design documents describe them and a reader may come
   is a consumer-lag figure, and there is nowhere to publish one from yet. `WithInitialLoadDetector`
   remains, because those designs stand and because it carries the warm-up poll timeout.
 
+[0.1.1]: https://github.com/easykafka/easykafka-config-go/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/easykafka/easykafka-config-go/releases/tag/v0.1.0
