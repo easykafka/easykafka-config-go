@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) — with the usual pre-1.0 caveat that the
 public API may still change in a minor release.
 
-## [0.1.1]
+## [0.1.1] - 2026-10-13
 
 A maintenance release: no change to the API or to the loader's behaviour.
 
