@@ -15,7 +15,7 @@ go 1.27.0
 // - moby/moby/api: the docker types that modifier takes. Not a dependency of the library itself — no
 //   non-test file imports it — and the version is whatever testcontainers-go already resolved to.
 require (
-	github.com/confluentinc/confluent-kafka-go/v2 v2.16.0
+	github.com/confluentinc/confluent-kafka-go/v2 v2.16.1
 	github.com/moby/moby/api v1.56.1
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.12.1
