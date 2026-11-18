@@ -2,8 +2,35 @@
 
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html) — with the usual pre-1.0 caveat that the
-public API may still change in a minor release.
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.0.0] - 2026-11-18
+
+The first stable release. The API and the loader's behaviour are the ones 0.1.1 shipped; what
+changes is the promise. From here on, a breaking change to them waits for 2.0.0.
+
+### What 1.0.0 covers
+
+These stay compatible across every 1.x release:
+
+- **The exported API of the package**: `Loader`, `Store`, `Binding`, the codecs and tombstone
+  policies, `Observer`, `Stats`, `LookupRaw`, the options and the sentinel errors, and what each is
+  documented to do.
+- **The behaviour the README's *Design notes* describe.** `Start` returns only once every bound
+  topic has been read to its end, and warm-up is all-or-nothing. Partitions are assigned explicitly,
+  so no consumer group is joined. Offsets are never committed.
+
+These are not covered:
+
+- **Anything under `internal/`.** Go already stops other modules from importing it.
+- **`WithConsumerFactory`.** It is the unit tests' seam onto the fake consumer. Its argument names an
+  `internal/` type, so no other module can call it anyway.
+
+### Changed
+
+- **Requires `confluent-kafka-go` 2.16.1**, up from 2.16.0: a patch release of the Kafka client. It
+  is the same version `easykafka-go` 1.0.0 requires, so a service using both libraries builds against
+  one librdkafka.
 
 ## [0.1.1] - 2026-10-13
 
@@ -61,5 +88,6 @@ These are named because the design documents describe them and a reader may come
   is a consumer-lag figure, and there is nowhere to publish one from yet. `WithInitialLoadDetector`
   remains, because those designs stand and because it carries the warm-up poll timeout.
 
+[1.0.0]: https://github.com/easykafka/easykafka-config-go/compare/v0.1.1...v1.0.0
 [0.1.1]: https://github.com/easykafka/easykafka-config-go/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/easykafka/easykafka-config-go/releases/tag/v0.1.0

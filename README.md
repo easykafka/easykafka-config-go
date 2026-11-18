@@ -277,8 +277,9 @@ make help              # list all targets
 ## 📜 Releases
 
 Version history is in [CHANGELOG.md](CHANGELOG.md); tagged releases appear on
-[pkg.go.dev](https://pkg.go.dev/github.com/easykafka/easykafka-config-go). Pre-1.0, the public API may
-still change in a minor release.
+[pkg.go.dev](https://pkg.go.dev/github.com/easykafka/easykafka-config-go). The library follows semantic
+versioning: from 1.0.0, a breaking change to the public API or to the behaviour its design notes
+describe waits for the next major version.
 
 ## 📄 Licence
 
